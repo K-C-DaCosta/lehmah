@@ -1,0 +1,9 @@
+[package]
+name = "oxypress_server"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+oxypress_core = { path  ="../oxypress_core" }
+actix-web = "4.11.0"
+backtrace = "0.3.75"
