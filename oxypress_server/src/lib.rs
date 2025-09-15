@@ -17,3 +17,17 @@ fn chrono_test(){
     print!("Chrono = {}",123);
 
 }
+
+#[test]
+fn backtrace_check(){
+
+    fn recursive_thing(depth:i32){
+        if depth <= 0 {
+            let bt = backtrace::Backtrace::new();
+            println!("{:?}",bt);
+            return; 
+        }
+        recursive_thing(depth-1);
+    }
+    recursive_thing(10);
+}

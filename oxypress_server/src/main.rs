@@ -1,6 +1,5 @@
 use actix_web::{App, HttpRequest, HttpResponse, HttpServer, Responder, get, post, web};
 use oxypress_server::authenticate;
-use oxypress_core::prelude::*;
 
 
 #[get("/")]
@@ -29,7 +28,7 @@ async fn main() -> std::io::Result<()> {
             .service(echo)
             .route("/hey", web::get().to(manual_hello))
     })
-    .bind(("localhost", 8080))?
+    .bind(("local.khadeemdacosta.ca", 80))?
     .run()
     .await
 }

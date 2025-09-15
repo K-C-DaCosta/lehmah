@@ -1,3 +1,4 @@
+
 #[derive(Copy, Clone)]
 pub enum ConsoleColors {
     BLACK = 30,
@@ -12,6 +13,14 @@ pub enum ConsoleColors {
 }
 
 #[macro_export]
+/// ## Description
+/// Writes colored(`ConsoleColors`) text to **STDOUT**
+/// ## Example
+/// ```
+/// use oxypress_core::{loggy,log::*};
+/// loggy!(ConsoleColors::YELLOW, "Hello world, im Yellow!");
+/// ```
+/// First Parameter is always a `ConsoleColor` next paramters work just like the `println!(..)`  macro
 macro_rules! loggy {
     ( $head:expr, $($rest:tt)+ ) => {
         let log_timestamp = chrono::Utc::now().format("%d/%m/%Y_%H:%M:%S");
@@ -23,6 +32,11 @@ macro_rules! loggy {
         // TO DO: This could be more efficient, but its good for now
         std::print!("{}",&format_args!($($rest)*).to_string());
         std::print!("\x1b[0m\n");
+        {
+            use std::io::Write;
+            std::io::stdout().flush().unwrap();
+        }
+
     };
 }
 

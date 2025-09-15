@@ -5,3 +5,7 @@ edition = "2024"
 
 [dependencies]
 chrono = "0.4.42"
+serde = "1.0.223"
+
+[build-dependencies]
+chrono = "*"

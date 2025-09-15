@@ -1,0 +1,4 @@
+generated_configs/*
+!generated_configs/.stub
+generated_local_certs/*
+!generated_local_certs/.stub
