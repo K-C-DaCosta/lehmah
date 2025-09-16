@@ -5,8 +5,12 @@ edition = "2024"
 
 [dependencies]
 oxypress_core = { path = "../oxypress_core" }
-actix-web = "4.11.0"
+actix-web = { version = "4.11.0", features = ["rustls-0_23"] }
+rustls = "0.23"
+rustls-pemfile = "2"
+
 backtrace = "0.3.75"
+tokio = { version = "*", features = ["full"] }
 
 [build-dependencies]
 oxypress_core = { path = "../oxypress_core" }

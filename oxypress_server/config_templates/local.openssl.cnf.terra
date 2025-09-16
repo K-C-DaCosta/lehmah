@@ -1,6 +1,7 @@
 [ req ]
 prompt = no
 distinguished_name = req_distinguished_name
+x509_extensions = v3_ext
 req_extensions = v3_req
 
 [ req_distinguished_name ]
@@ -10,15 +11,19 @@ L  = {{ oxypress_web_server_local_locality }}
 O  = {{ oxypress_web_server_local_organization_description }}
 CN = {{ oxypress_web_server_hostname }}
 
+[ v3_ext ]
+basicConstraints = critical,CA:false
+keyUsage = digitalSignature, keyEncipherment
+extendedKeyUsage = serverAuth
+subjectAltName = @alt_names
+
 [ v3_req ]
 keyUsage = nonRepudiation, digitalSignature, keyEncipherment
 extendedKeyUsage = serverAuth
 subjectAltName = @alt_names
 
 [ alt_names ]
-
 DNS.1 = {{oxypress_web_server_hostname}}
 DNS.2 = blog.{{oxypress_web_server_hostname}}
 DNS.3 = www.{{oxypress_web_server_hostname}}
 DNS.4 = local.{{oxypress_web_server_hostname}}
-DNS.5 = local.{{oxypress_web_server_hostname}}
