@@ -1,6 +1,7 @@
 use oxypress_core::{log::ConsoleColors, loggy};
 use serde::Serialize;
 use std::{
+    collections::HashMap,
     fs::{self, File},
     io::Write,
     os::unix::process::CommandExt,
@@ -17,16 +18,15 @@ struct EtcHostRecord<'a> {
     hostname: &'a str,
 }
 
-#[derive(Serialize, Clone, Copy)]
+#[derive(Serialize, Clone)]
 struct WebServerSelfSignedSSLConfigContext<'a> {
     oxypress_web_server_hostname: &'a str,
     oxypress_web_server_local_country: &'a str,
     oxypress_web_server_local_state: &'a str,
     oxypress_web_server_local_locality: &'a str,
     oxypress_web_server_local_organization_description: &'a str,
+    alt_names: Vec<&'a str>,
 }
-
-
 
 fn main() {
     println!("cargo:rerun-if-changed=build.rs");
@@ -75,11 +75,16 @@ fn generate_oxypress_webservers_local_ssl_configs(template_engine: &Tera) {
         oxypress_web_server_local_state: "ON",
         oxypress_web_server_local_locality: "TO",
         oxypress_web_server_local_organization_description: "Description",
+        alt_names: vec![
+            "blog.khadeemdacosta.ca",
+            "www.khadeemdacosta.ca",
+            "local.khadeemdacosta.ca",
+        ],
     };
     generate_config_file_at_destination(
         template_engine,
         "local.openssl.cnf.terra",
-        tera::Context::from_serialize(local_cert_ctx).unwrap(),
+        tera::Context::from_serialize(&local_cert_ctx).unwrap(),
         generated_config_directory,
     );
     #[cfg(target_os = "linux")]
@@ -96,33 +101,36 @@ fn generate_oxypress_webservers_local_ssl_configs(template_engine: &Tera) {
 }
 
 fn omit_warning_if_ctx_isnt_fount_in_etc_hosts(ctx: &WebServerSelfSignedSSLConfigContext) {
-    let canonical_hostname = ctx.oxypress_web_server_hostname;
-    let conanical_name_found = process_hosts_file(|iterator| {
-        for EtcHostRecord { hostname, .. } in iterator {
-            if hostname.contains(canonical_hostname) {
-                return true;
-            }
-        }
-        false
+    let all_names_have_ips_mapped_to_them = process_hosts_file(|iterator| {
+        let hostname_to_ip_map = iterator
+            .map(|EtcHostRecord { hostname, _ip }| (hostname.trim(), _ip.trim()))
+            .collect::<HashMap<_, _>>();
+        hostname_to_ip_map.contains_key(ctx.oxypress_web_server_hostname)
+            && ctx
+                .alt_names
+                .iter()
+                .all(|alt_name| hostname_to_ip_map.contains_key(alt_name))
     });
-    if !conanical_name_found {
+    if !all_names_have_ips_mapped_to_them {
         let warning = r"
-        The canonical hostname wasn't found anywhere in
-        /etc/hosts/ make sure it's configured properly otherwise 
+        missing hostnames in /etc/hosts/. make sure it's configured properly otherwise 
         the auto-generated self-signed cert won't work as expected.
         ";
-        println!(
-            "cargo:warning={}",
-            warning
-                .trim()
-                .lines()
-                .flat_map(|line| line
-                    .split(char::is_whitespace)
-                    .filter(|word| !word.is_empty()))
-                .collect::<Vec<_>>()
-                .join(" ")
-        );
+        println!("cargo:warning={}", convert_to_one_liner(warning));
     }
+}
+
+fn convert_to_one_liner<'a, T: Into<&'a str>>(comment: T) -> String {
+    comment
+        .into()
+        .trim()
+        .lines()
+        .flat_map(|line| {
+            line.split(char::is_whitespace)
+                .filter(|word| !word.is_empty())
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 fn process_hosts_file<F, Out>(callback: F) -> Out

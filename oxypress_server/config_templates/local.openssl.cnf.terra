@@ -23,7 +23,7 @@ extendedKeyUsage = serverAuth
 subjectAltName = @alt_names
 
 [ alt_names ]
-DNS.1 = {{oxypress_web_server_hostname}}
-DNS.2 = blog.{{oxypress_web_server_hostname}}
-DNS.3 = www.{{oxypress_web_server_hostname}}
-DNS.4 = local.{{oxypress_web_server_hostname}}
+DNS.1={{ oxypress_web_server_hostname }}
+{% for name in alt_names -%}
+DNS.{{loop.index+1}}={{name}}
+{% endfor %}

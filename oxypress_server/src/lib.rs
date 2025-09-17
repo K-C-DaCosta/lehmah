@@ -1,33 +1,81 @@
-use actix_web::{HttpRequest, HttpResponse};
+use actix_files::NamedFile;
+use actix_web::HttpRequest;
+use actix_web::{
+    App, HttpResponse, HttpServer, Responder, error, get, guard, middleware::Logger,
+    post, web,
+};
+use oxypress_core::{log::ConsoleColors, loggy};
+use std::{fs, io, path};
 
-pub fn authenticate<Cb, CbOut>(_req: &HttpRequest, callback: Cb) -> CbOut
+
+pub struct UserSessionContext {}
+
+pub fn authenticate<Cb, CbOut, AuthOut>(_req: &HttpRequest, callback: Cb) -> CbOut
 where
-    Cb: Fn() -> CbOut,
-    CbOut: Future<Output = actix_web::Result<HttpResponse>>,
+    Cb: FnOnce(UserSessionContext) -> CbOut,
+    CbOut: Future<Output = AuthOut>,
 {
+    let auth_ctx = UserSessionContext {};
     // Gets cookie info from request, finds client session from request
-    callback() // callback does task now with user state in mind
+    callback(auth_ctx) // callback does task now with user state in mind
 }
 
+#[get("/")]
+async fn homepage(req: HttpRequest) -> actix_web::Result<NamedFile> {
+    let req_ref = &req;
+    if let Some(val) = req.headers().get("host") {
+        let host_value = val.to_str().unwrap();
+        loggy!(ConsoleColors::YELLOW, "host header = {}", host_value);
+    }
+    loggy!(ConsoleColors::YELLOW, "homepage requested!");
+    let path = path::Path::new("./resources/").join("homepage.html");
+    authenticate(req_ref, move |_ctx| async {
+        NamedFile::open(path).map_err(|e| error::ErrorNotFound(format!("{:?}", e)))
+    })
+    .await
+}
 
+#[get("/")]
+async fn blog_homepage(req: HttpRequest) -> actix_web::Result<NamedFile> {
+    let req_ref = &req;
+    loggy!(ConsoleColors::YELLOW, "BLOG homepage requested!");
+    let path = path::Path::new("./resources/").join("blog_homepage.html");
+    authenticate(req_ref, move |_ctx| async {
+        NamedFile::open(path).map_err(|e| error::ErrorNotFound(format!("{:?}", e)))
+    })
+    .await
+}
 
-#[test]
-fn chrono_test(){
+#[get("/{filename:.+\\.[a-zA-z]+}")]
+async fn fetch_files_on_disk(
+    req: HttpRequest,
+    filename: web::Path<String>,
+) -> actix_web::Result<NamedFile> {
+    let req_ref = &req;
+    loggy!(ConsoleColors::YELLOW, "file '{:?}' ", filename);
+    let path = path::Path::new("./resources/").join(filename.as_str());
 
-    print!("Chrono = {}",123);
-
+    loggy!(ConsoleColors::YELLOW, "path = {:?} requested!", path);
+    authenticate(req_ref, move |_ctx| async {
+        NamedFile::open(path).map_err(|e| error::ErrorNotFound(format!("{:?}", e)))
+    })
+    .await
 }
 
 #[test]
-fn backtrace_check(){
+fn chrono_test() {
+    print!("Chrono = {}", 123);
+}
 
-    fn recursive_thing(depth:i32){
+#[test]
+fn backtrace_check() {
+    fn recursive_thing(depth: i32) {
         if depth <= 0 {
             let bt = backtrace::Backtrace::new();
-            println!("{:?}",bt);
-            return; 
+            println!("{:?}", bt);
+            return;
         }
-        recursive_thing(depth-1);
+        recursive_thing(depth - 1);
     }
     recursive_thing(10);
 }

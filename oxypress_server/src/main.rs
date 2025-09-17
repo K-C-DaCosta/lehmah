@@ -1,24 +1,6 @@
-use actix_web::{App, HttpRequest, HttpResponse, HttpServer, Responder, get, post, web};
-use oxypress_server::authenticate;
-use std::{fs::*, io};
-
-#[get("/")]
-async fn hello(req: HttpRequest) -> actix_web::Result<HttpResponse> {
-    let req_ref = &req;
-    authenticate(req_ref, move || async {
-        Ok(HttpResponse::Ok().body("hello world"))
-    })
-    .await
-}
-
-#[post("/echo")]
-async fn echo(req_body: String) -> impl Responder {
-    HttpResponse::Ok().body(req_body)
-}
-
-async fn manual_hello() -> impl Responder {
-    HttpResponse::Ok().body("Hey there!")
-}
+use actix_web::{App, HttpServer, guard, web};
+use oxypress_core::{log::ConsoleColors, loggy};
+use std::{fs, io};
 
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
@@ -26,9 +8,19 @@ async fn main() -> std::io::Result<()> {
         .install_default()
         .unwrap();
 
+    let cwd = std::env::current_dir()?;
+    std::env::set_current_dir(cwd.join("oxypress_server"))?;
+
+    loggy!(
+        ConsoleColors::YELLOW,
+        "Servers CWD set to: {:?}",
+        std::env::current_dir().unwrap(),
+    );
+
     let mut certs_file =
-        io::BufReader::new(File::open("./generated_local_certs/cert.pem").unwrap());
-    let mut key_file = io::BufReader::new(File::open("./generated_local_certs/key.pem").unwrap());
+        io::BufReader::new(fs::File::open("./generated_local_certs/cert.pem").unwrap());
+    let mut key_file =
+        io::BufReader::new(fs::File::open("./generated_local_certs/key.pem").unwrap());
 
     // load TLS certs and key
     // to create a self-signed temporary cert for testing:
@@ -46,43 +38,32 @@ async fn main() -> std::io::Result<()> {
         .with_no_client_auth()
         .with_single_cert(tls_certs, rustls::pki_types::PrivateKeyDer::Pkcs8(tls_key))
         .unwrap();
+    
+    env_logger::init_from_env(env_logger::Env::new().default_filter_or("info"));
 
     HttpServer::new(move || {
         App::new()
-            .service(hello)
-            .service(echo)
-            .route("/hey", web::get().to(manual_hello))
+            // .wrap(Logger::new("%a \"%r\" %s %b \"%{Referer}i\" \"%{User-Agent}i\" %T host=%{HOST}i"))
+            .service(
+                web::scope("")
+                    .guard(guard::Host("local.khadeemdacosta.ca"))
+                    .service(oxypress_server::homepage),
+            )
+            .service(
+                web::scope("")
+                    .guard(guard::Host("www.khadeemdacosta.ca"))
+                    .service(oxypress_server::homepage),
+            )
+            .service(
+                web::scope("")
+                    .guard(guard::Host("blog.khadeemdacosta.ca"))
+                    .service(oxypress_server::blog_homepage),
+            )
+            .service(oxypress_server::homepage)
+            .service(oxypress_server::fetch_files_on_disk)
     })
-    .bind(("local.khadeemdacosta.ca", 8080))?
-    .bind_rustls_0_23(("local.khadeemdacosta.ca", 8081), tls_config)?
+    .bind(("khadeemdacosta.ca", 8080))?
+    .bind_rustls_0_23(("khadeemdacosta.ca", 8081), tls_config)?
     .run()
     .await
-}
-
-#[test]
-fn query() {
-    println!("Hosts info by line");
-    std::fs::read_to_string("/etc/hosts")
-        .unwrap()
-        .lines()
-        .filter(|line| line.len() > 2 && !line.starts_with("#"))
-        .for_each(|result| {
-            println!("line: {:?}", result);
-        });
-
-    println!("more indepth parse:");
-
-    std::fs::read_to_string("/etc/hosts")
-        .unwrap()
-        .lines()
-        .filter(|line| !line.is_empty() && !line.starts_with("#"))
-        .flat_map(|line| {
-            let mut valid_line_tokens = line
-                .split(char::is_whitespace)
-                .filter(|token| !token.is_empty());
-            let ip = valid_line_tokens.next();
-            let hostnames = valid_line_tokens;
-            hostnames.filter_map(move |hostname| ip.zip(Some(hostname)))
-        })
-        .for_each(|result| println!("{:?}", result));
 }
