@@ -1,11 +1,14 @@
 use actix_files::NamedFile;
-use actix_web::HttpRequest;
 use actix_web::{
-    App, HttpResponse, HttpServer, Responder, error, get, guard, middleware::Logger, post, web,
+    App, HttpRequest, HttpResponse, HttpServer, Responder, error, get, guard, middleware::Logger,
+    post, web,
 };
-use oxypress_core::{log::ConsoleColors, loggy};
-use std::{fs, io, path};
 
+use oxypress_core::{log::ConsoleColors, loggy};
+use std::{fs, io};
+
+const PHYSICAL_ROOT_DIR: &str = "./resources";
+const DEFAULT_ENV_FILE: &str = "./.env.local.template";
 pub struct UserSessionContext {}
 
 pub fn authenticate<Cb, CbOut, AuthOut>(_req: &HttpRequest, callback: Cb) -> CbOut
@@ -26,7 +29,7 @@ async fn homepage(req: HttpRequest) -> actix_web::Result<NamedFile> {
         loggy!(ConsoleColors::YELLOW, "host header = {}", host_value);
     }
     loggy!(ConsoleColors::YELLOW, "homepage requested!");
-    let path = path::Path::new("./resources/").join("homepage.html");
+    let path = translate_to_physical("homepage.html");
     authenticate(req_ref, move |_ctx| async {
         NamedFile::open(path).map_err(|e| error::ErrorNotFound(format!("{:?}", e)))
     })
@@ -37,7 +40,7 @@ async fn homepage(req: HttpRequest) -> actix_web::Result<NamedFile> {
 async fn blog_homepage(req: HttpRequest) -> actix_web::Result<NamedFile> {
     let req_ref = &req;
     loggy!(ConsoleColors::YELLOW, "BLOG homepage requested!");
-    let path = path::Path::new("./resources/").join("blog_homepage.html");
+    let path = translate_to_physical("blog_homepage.html");
     authenticate(req_ref, move |_ctx| async {
         NamedFile::open(path).map_err(|e| error::ErrorNotFound(format!("{:?}", e)))
     })
@@ -51,8 +54,7 @@ async fn fetch_files_on_disk(
 ) -> actix_web::Result<NamedFile> {
     let req_ref = &req;
     loggy!(ConsoleColors::YELLOW, "file '{:?}' ", filename);
-    let path = path::Path::new("./resources/").join(filename.as_str());
-
+    let path = translate_to_physical(filename.as_str());
     loggy!(ConsoleColors::YELLOW, "path = {:?} requested!", path);
     authenticate(req_ref, move |_ctx| async {
         NamedFile::open(path).map_err(|e| error::ErrorNotFound(format!("{:?}", e)))
@@ -63,7 +65,7 @@ async fn fetch_files_on_disk(
 pub fn configure_tls() -> rustls::ServerConfig {
     let untrusted_certs_dir = std::env::var("OXYPRESS_WEB_UNTRUSTED_CERT_DIRECTORY").ok();
     let trusted_certs_dir = std::env::var("OXYPRESS_WEB_TRUSTED_CERT_DIRECTORY").ok();
-    
+
     let configured_directory = std::path::PathBuf::from(
         match (untrusted_certs_dir, trusted_certs_dir) {
             (None, None) => {
@@ -107,6 +109,24 @@ pub fn configure_tls() -> rustls::ServerConfig {
         .with_no_client_auth()
         .with_single_cert(tls_certs, rustls::pki_types::PrivateKeyDer::Pkcs8(tls_key))
         .unwrap()
+}
+
+pub fn initalize_oxypress_env_vars() {
+    dotenvy::from_path(match std::env::var("OXYPRESS_ENV_DIR").ok() {
+        Some(env_dir) => env_dir,
+        None => {
+            loggy!(
+                ConsoleColors::YELLOW,
+                "Default ENV file selected. Assuming local run."
+            );
+            String::from(DEFAULT_ENV_FILE)
+        }
+    })
+    .unwrap();
+}
+
+pub fn translate_to_physical<P: AsRef<std::path::Path>>(path: P) -> std::path::PathBuf {
+    std::path::Path::new(PHYSICAL_ROOT_DIR).join(path)
 }
 
 #[test]
