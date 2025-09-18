@@ -1,12 +1,26 @@
-use actix_web::{App, HttpServer, guard, web};
+use actix_web::{App, HttpServer, guard, web, middleware::Logger,};
 use oxypress_core::{log::ConsoleColors, loggy};
-use std::{fs, io};
+use std::env;
+
+const DEFAULT_ENV_FILE: &str = "./.env.local.template";
 
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
     rustls::crypto::aws_lc_rs::default_provider()
         .install_default()
         .unwrap();
+
+    dotenvy::from_path(match std::env::var("OXYPRESS_ENV_DIR").ok() {
+        Some(env_dir) => env_dir,
+        None => {
+            loggy!(
+                ConsoleColors::YELLOW,
+                "Default ENV file selected. Assuming local run."
+            );
+            String::from(DEFAULT_ENV_FILE)
+        }
+    })
+    .unwrap();
 
     let cwd = std::env::current_dir()?;
     std::env::set_current_dir(cwd.join("oxypress_server"))?;
@@ -17,28 +31,8 @@ async fn main() -> std::io::Result<()> {
         std::env::current_dir().unwrap(),
     );
 
-    let mut certs_file =
-        io::BufReader::new(fs::File::open("./generated_local_certs/cert.pem").unwrap());
-    let mut key_file =
-        io::BufReader::new(fs::File::open("./generated_local_certs/key.pem").unwrap());
-
-    // load TLS certs and key
-    // to create a self-signed temporary cert for testing:
-    // `openssl req -x509 -newkey rsa:4096 -nodes -keyout key.pem -out cert.pem -days 365 -subj '/CN=localhost'`
-    let tls_certs = rustls_pemfile::certs(&mut certs_file)
-        .collect::<Result<Vec<_>, _>>()
-        .unwrap();
-    let tls_key = rustls_pemfile::pkcs8_private_keys(&mut key_file)
-        .next()
-        .unwrap()
-        .unwrap();
-
     // set up TLS config options
-    let tls_config = rustls::ServerConfig::builder()
-        .with_no_client_auth()
-        .with_single_cert(tls_certs, rustls::pki_types::PrivateKeyDer::Pkcs8(tls_key))
-        .unwrap();
-    
+    let tls_config = oxypress_server::configure_tls();
     env_logger::init_from_env(env_logger::Env::new().default_filter_or("info"));
 
     HttpServer::new(move || {
@@ -47,23 +41,41 @@ async fn main() -> std::io::Result<()> {
             .service(
                 web::scope("")
                     .guard(guard::Host("local.khadeemdacosta.ca"))
-                    .service(oxypress_server::homepage),
+                    .service(oxypress_server::homepage)
+                    .service(oxypress_server::fetch_files_on_disk),
             )
             .service(
                 web::scope("")
                     .guard(guard::Host("www.khadeemdacosta.ca"))
-                    .service(oxypress_server::homepage),
+                    .service(oxypress_server::homepage)
+                    .service(oxypress_server::fetch_files_on_disk),
             )
             .service(
                 web::scope("")
                     .guard(guard::Host("blog.khadeemdacosta.ca"))
-                    .service(oxypress_server::blog_homepage),
+                    .service(oxypress_server::blog_homepage)
+                    .service(oxypress_server::fetch_files_on_disk),
             )
             .service(oxypress_server::homepage)
             .service(oxypress_server::fetch_files_on_disk)
     })
-    .bind(("khadeemdacosta.ca", 8080))?
-    .bind_rustls_0_23(("khadeemdacosta.ca", 8081), tls_config)?
+    .bind((
+        "khadeemdacosta.ca",
+        env::var("OXYPRESS_WEB_HTTP_PORT")
+            .unwrap()
+            .parse::<_>()
+            .unwrap(),
+    ))?
+    .bind_rustls_0_23(
+        (
+            "khadeemdacosta.ca",
+            env::var("OXYPRESS_WEB_HTTPS_PORT")
+                .unwrap()
+                .parse::<_>()
+                .unwrap(),
+        ),
+        tls_config,
+    )?
     .run()
     .await
 }
