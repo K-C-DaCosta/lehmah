@@ -1,0 +1,77 @@
+.gg-format-italic {
+  box-sizing: border-box;
+  position: relative;
+  display: block;
+  transform: skewX(-20deg) scale(var(--ggs, 1));
+  width: 6px;
+  height: 12px;
+  border-top: 2px solid;
+  border-bottom: 2px solid;
+}
+.gg-format-italic::before {
+  content: "";
+  display: block;
+  box-sizing: border-box;
+  position: absolute;
+  height: 10px;
+  width: 2px;
+  background: currentColor;
+  left: 2px;
+  top: -2px;
+}
+
+.gg-format-underline {
+  box-sizing: border-box;
+  position: relative;
+  display: block;
+  transform: scale(var(--ggs, 1));
+  width: 12px;
+  height: 12px;
+  border: 2px solid;
+  border-top: 0;
+  border-bottom-left-radius: 100px;
+  border-bottom-right-radius: 100px;
+}
+.gg-format-underline::after {
+  content: "";
+  display: block;
+  box-sizing: border-box;
+  position: absolute;
+  border-radius: 3px;
+  width: 12px;
+  height: 2px;
+  background: currentColor;
+  left: -2px;
+  bottom: -6px;
+}
+.gg-layout-list {
+  transform: scale(var(--ggs, 1));
+}
+
+.gg-layout-list,
+.gg-layout-list::after,
+.gg-layout-list::before {
+  box-sizing: border-box;
+  position: relative;
+  display: block;
+  width: 10px;
+  height: 2px;
+  border-left: 6px double;
+  border-right: 4px solid;
+}
+.gg-layout-list::after,
+.gg-layout-list::before {
+  content: "";
+  position: absolute;
+  left: -6px;
+}
+.gg-layout-list::after {
+  bottom: 4px;
+}
+.gg-layout-list::before {
+  top: 4px;
+}
+
+
+
+

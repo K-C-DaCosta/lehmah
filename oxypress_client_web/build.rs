@@ -17,19 +17,11 @@ fn install_trunk_if_not_installed() {
                 version.trim()
             );
         }
-        Err(_) => {
-            let status = Command::new("cargo")
-                .arg("install")
-                .arg("--locked")
-                .arg("trunk") // For an optimized, production-ready build
-                .status()
-                .expect("Failed to execute trunk install");
-
-            if !status.success() {
-                panic!("Trunk install failed");
-            } else {
-                loggy!(ConsoleColors::GREEN, "Trunk installed with no Errors!");
-            }
+        Err(e) => {
+            panic!(
+                "Failed to find trunk executable: {}. Please install it using `cargo install trunk`.",
+                e
+            );
         }
     }
 }

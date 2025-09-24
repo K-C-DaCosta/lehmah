@@ -3,7 +3,6 @@ use oxypress_core::{log::ConsoleColors, loggy};
 use oxypress_server::initalize_oxypress_env_vars;
 use std::env;
 
-
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
     rustls::crypto::aws_lc_rs::default_provider()
@@ -11,15 +10,7 @@ async fn main() -> std::io::Result<()> {
         .unwrap();
     
     initalize_oxypress_env_vars();
-
-    let cwd = std::env::current_dir()?;
-    std::env::set_current_dir(cwd.join("oxypress_server"))?;
-
-    loggy!(
-        ConsoleColors::YELLOW,
-        "Servers CWD set to: {:?}",
-        std::env::current_dir().unwrap(),
-    );
+    initalize_server_cwd()?;
 
     // set up TLS config options
     let tls_config = oxypress_server::configure_tls();
@@ -68,4 +59,29 @@ async fn main() -> std::io::Result<()> {
     )?
     .run()
     .await
+}
+
+fn initalize_server_cwd() -> std::io::Result<()> {
+    let cwd = std::env::current_dir()?;
+
+    let relative_dir = match std::env::var("OXYPRESS_WEB_CWD_RELATIVE") {
+        Ok(text) => text,
+        Err(err) => {
+            loggy!(
+                ConsoleColors::RED,
+                "OXYPRESS_WEB_CWD_RELATIVE ERR: {:?}",
+                err
+            );
+            panic!("{:?}", err);
+        }
+    };
+
+    std::env::set_current_dir(cwd.join(relative_dir))?;
+
+    loggy!(
+        ConsoleColors::YELLOW,
+        "Servers CWD set to: {:?}",
+        std::env::current_dir().unwrap(),
+    );
+    Ok(())
 }

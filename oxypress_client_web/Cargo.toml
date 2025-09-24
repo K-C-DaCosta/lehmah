@@ -5,6 +5,8 @@ edition = "2024"
 
 [dependencies]
 oxypress_core ={path = "../oxypress_core"}
+yew = { version = "0.21", features = ["csr"] }
+web-sys = { version="0.3.80" }
 
 [build-dependencies]
 oxypress_core ={path = "../oxypress_core"}
