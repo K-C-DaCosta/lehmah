@@ -9,6 +9,7 @@ document-editor-frame {
 
 document-editor-tools {
     display: flex;
+    user-select: none;
     flex-direction: row;
     justify-content:right;
     align-items: stretch;

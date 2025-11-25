@@ -4,10 +4,16 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-oxypress_core ={path = "../oxypress_core"}
+bitflags = "2.5.0"
+oxypress_core = { path = "../oxypress_core" }
 yew = { version = "0.21", features = ["csr"] }
-web-sys = { version="0.3.80" }
+web-sys = { version = "0.3.80", features = [
+    'Selection',
+    'Window',
+    'TreeWalker',
+    'NodeFilter',
+] }
 
 [build-dependencies]
-oxypress_core ={path = "../oxypress_core"}
+oxypress_core = { path = "../oxypress_core" }
 chrono = "0.4.42"

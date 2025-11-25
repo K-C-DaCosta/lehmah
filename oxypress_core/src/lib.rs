@@ -31,3 +31,8 @@ impl Default  for DomPointer{
         Self::new()
     }
 }
+
+pub fn hello_world() -> u32{
+    let x = 123123u32; 
+    x
+}
