@@ -58,7 +58,7 @@ fn console_log(text: String) {
 
 #[function_component]
 fn App() -> Html {
-    let state = use_state(|| DocumentEditorState::new());
+    let state = use_state(DocumentEditorState::new);
     let onclick = {};
     let filler_text = "foo bar";
     let bold_tool_text = "B";
@@ -105,8 +105,7 @@ fn App() -> Html {
 
             console_log(format!(
                 "LOG: sel direction = {}, sel type = {} ",
-                selection_direction,
-                selection_type
+                selection_direction, selection_type
             ));
 
             if !(selection_direction == "forward" || selection_direction == "none") {

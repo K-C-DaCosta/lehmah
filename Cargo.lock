@@ -1830,7 +1830,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "oxypress_server"
+name = "oxypress_web_server"
 version = "0.1.0"
 dependencies = [
  "actix-files",

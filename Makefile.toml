@@ -1,0 +1,11 @@
+[tasks.build-core]
+workspace = false
+command = "cargo"
+args = ["build", "-p", "oxypress_core", "--target", "x86_64-unknown-linux-musl"]
+
+[tasks.build-server]
+workspace = false 
+command = "cargo"
+args = ["build", "-p", "oxypress_web_server", "--target", "x86_64-unknown-linux-musl"]
+
+

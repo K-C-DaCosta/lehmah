@@ -1,14 +1,13 @@
+
 use actix_files::NamedFile;
 use actix_web::{
     App, HttpRequest, HttpResponse, HttpServer, Responder, error, get, guard, middleware::Logger,
     post, web,
 };
-
-use oxypress_core::{log::ConsoleColors, loggy};
+use oxypress_core::{loggy,log::*};
 use std::{fs, io};
+use crate::{DEFAULT_ENV_FILE,PHYSICAL_ROOT_DIR};
 
-const PHYSICAL_ROOT_DIR: &str = "./resources";
-const DEFAULT_ENV_FILE: &str = "./.env.local.template";
 pub struct UserSessionContext {}
 
 pub fn authenticate<Cb, CbOut, AuthOut>(_req: &HttpRequest, callback: Cb) -> CbOut

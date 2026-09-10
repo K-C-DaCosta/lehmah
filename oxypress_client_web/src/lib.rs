@@ -25,7 +25,7 @@ impl DomAddressable for DomPointer {
                     break;
                 }
             }
-            
+
             cur = parent;
         }
 
