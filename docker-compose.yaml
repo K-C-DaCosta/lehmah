@@ -1,0 +1,21 @@
+services:
+  oxypress-web-server:
+    build:
+      context: .
+      dockerfile: oxypress_web_server/Dockerfile
+    ports:
+      - "80:8080"
+      - "443:8081"
+    environment:
+      DATABASE_URL: postgres://postgres:example@oxypress-postgres-db:5432/postgres
+    depends_on:
+      - oxypress-postgres-db
+
+  oxypress-postgres-db:
+    image: postgres:16-alpine
+    restart: always
+    shm_size: 128mb
+    environment:
+      POSTGRES_PASSWORD: example
+    ports:
+      - "5432:5432"

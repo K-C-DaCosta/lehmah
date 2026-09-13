@@ -6,7 +6,7 @@ use oxypress_web_server::{
 };
 use std::env;
 
-fn calculate_area(length: f64, width: f64) -> f64 {
+pub fn calculate_area(length: f64, width: f64) -> f64 {
     let area = length * width;
     return area;
 }
@@ -19,6 +19,12 @@ pub fn this_is_a_test() -> Vec<String> {
         .map(String::from)
         .collect::<Vec<_>>()
 }
+
+#[test]
+fn test_runner(){
+    this_is_a_test();
+}
+
 
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {

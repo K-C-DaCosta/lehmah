@@ -3,9 +3,13 @@ name = "oxypress_client_web"
 version = "0.1.0"
 edition = "2024"
 
+
 [dependencies]
-bitflags = "2.5.0"
+cfg-if = "1.0.4"
 oxypress_core = { path = "../oxypress_core" }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+bitflags = "2.5.0"
 yew = { version = "0.21", features = ["csr"] }
 web-sys = { version = "0.3.80", features = [
     'Selection',

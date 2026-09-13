@@ -120,9 +120,9 @@ fn omit_warning_if_ctx_isnt_fount_in_etc_hosts(ctx: &WebServerSelfSignedSSLConfi
     }
 }
 
-fn convert_to_one_liner<'a, T: Into<&'a str>>(comment: T) -> String {
+fn convert_to_one_liner<T: AsRef<str>>(comment: T) -> String {
     comment
-        .into()
+        .as_ref()
         .trim()
         .lines()
         .flat_map(|line| {
