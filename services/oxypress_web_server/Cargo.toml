@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-oxypress_core = { path = "../oxypress_core" }
+oxypress_core = { path = "../../crates/oxypress_core" }
 actix-web = { version = "4.11.0", features = ["rustls-0_23"] }
 actix-files = { version ="0.6.8" }
 env_logger = "0.11.8"
@@ -16,7 +16,7 @@ tokio = { version = "*", features = ["full"] }
 chrono = "*"
 
 [build-dependencies]
-oxypress_core = { path = "../oxypress_core" }
+oxypress_core = { path = "../../crates/oxypress_core" }
 tera = "1.20.0"
 chrono = "*"
 serde = "*"

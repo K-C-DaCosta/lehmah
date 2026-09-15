@@ -1,18 +1,21 @@
 services:
-  oxypress-web-server:
+  oxypress_web_server:
+    image: oxypress_web_server:latest  # <--- Explicitly sets the image tag 
     build:
       context: .
-      dockerfile: oxypress_web_server/Dockerfile
+      dockerfile: services/oxypress_web_server/Dockerfile
     ports:
       - "80:8080"
       - "443:8081"
     environment:
-      DATABASE_URL: postgres://postgres:example@oxypress-postgres-db:5432/postgres
+      DATABASE_URL: postgres://postgres:example@oxypress_web_server_db:5432/postgres
     depends_on:
-      - oxypress-postgres-db
-
-  oxypress-postgres-db:
-    image: postgres:16-alpine
+      - oxypress_web_server_db
+  oxypress_web_server_db:
+    image: oxypress_web_db:latest
+    build:
+      context: ./services/oxypress_web_server_db 
+      dockerfile: ./Dockerfile
     restart: always
     shm_size: 128mb
     environment:

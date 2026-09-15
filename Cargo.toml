@@ -1,3 +1,6 @@
 [workspace]
 resolver = "1"
-members = ["oxypress_client_web", "oxypress_core", "oxypress_web_server"]
+members = [
+    "crates/oxypress_core",
+    "services/oxypress_web_server"
+]

@@ -1,12 +1,12 @@
 [package]
-name = "oxypress_client_web"
+name = "oxypress_web_client"
 version = "0.1.0"
 edition = "2024"
 
 
 [dependencies]
 cfg-if = "1.0.4"
-oxypress_core = { path = "../oxypress_core" }
+oxypress_core = { path = "./oxypress_core" }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 bitflags = "2.5.0"

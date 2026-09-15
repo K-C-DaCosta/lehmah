@@ -1,9 +1,6 @@
-use actix_web::{guard, middleware::Logger, web, App, HttpServer};
+use actix_web::{App, HttpServer, guard, middleware::Logger, web};
 use oxypress_core::{log::ConsoleColors, loggy};
-use oxypress_web_server::{
-    initalize_oxypress_env_vars,
-    routes
-};
+use oxypress_web_server::{initalize_oxypress_env_vars, routes};
 use std::env;
 
 pub fn calculate_area(length: f64, width: f64) -> f64 {
@@ -21,10 +18,9 @@ pub fn this_is_a_test() -> Vec<String> {
 }
 
 #[test]
-fn test_runner(){
+fn test_runner() {
     this_is_a_test();
 }
-
 
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {

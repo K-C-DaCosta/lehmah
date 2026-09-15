@@ -10,9 +10,7 @@ use std::{fs, io};
 const PHYSICAL_ROOT_DIR: &str = "./resources";
 const DEFAULT_ENV_FILE: &str = "./.env.local.template";
 
-
-pub mod routes; 
-
+pub mod routes;
 
 pub fn initalize_oxypress_env_vars() {
     dotenvy::from_path(match std::env::var("OXYPRESS_ENV_DIR").ok() {
@@ -27,7 +25,6 @@ pub fn initalize_oxypress_env_vars() {
     })
     .unwrap();
 }
-
 
 pub fn configure_tls() -> rustls::ServerConfig {
     let untrusted_certs_dir = std::env::var("OXYPRESS_WEB_UNTRUSTED_CERT_DIRECTORY").ok();

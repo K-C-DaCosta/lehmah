@@ -8,4 +8,11 @@ workspace = false
 command = "cargo"
 args = ["build", "-p", "oxypress_web_server", "--target", "x86_64-unknown-linux-musl"]
 
+[tasks.docker-clean-images]
+workspace = false
+script_runner = "bash"
+description = "removes all oxypress images from disk"
+script = '''
+docker image ls | tr -s ' ' | grep -i 'oxypress' | cut -d' ' -f3 | xargs docker rmi
+'''
 
