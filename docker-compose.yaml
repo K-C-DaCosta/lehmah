@@ -12,7 +12,7 @@ services:
     depends_on:
       - oxypress_web_server_db
   oxypress_web_server_db:
-    image: oxypress_web_db:latest
+    image: oxypress_web_server_db:latest
     build:
       context: ./services/oxypress_web_server_db 
       dockerfile: ./Dockerfile

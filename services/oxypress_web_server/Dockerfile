@@ -10,7 +10,7 @@ RUN cargo chef prepare --recipe-path recipe.json
 
 # Stage 2: Cache & build statically linked binary
 
-FROM chef AS builder
+FROM chef AS web-builder
 COPY --from=planner /app/recipe.json recipe.json
 
 # Build dependencies - this layer is cached unless Cargo.toml/Cargo.lock change
@@ -22,15 +22,22 @@ RUN cargo chef cook --release --target x86_64-unknown-linux-musl --recipe-path r
 COPY . .
 RUN cargo build --release --target x86_64-unknown-linux-musl -p oxypress_web_server
 
-# Stage 3: Minimal production runtime
+# Stage 3: build yew front-end for the oxypress webserver
+FROM chef AS client-builder
+WORKDIR /app
+COPY . .
+RUN rustup target add wasm32-unknown-unknown
+RUN cargo install trunk --locked
+WORKDIR /app/crates/oxypress_web_client
+RUN trunk build
+
+# Stage 4: Minimal production runtime
 FROM gcr.io/distroless/static-debian12 AS runtime
 WORKDIR /app
 
 # Copy binary from builder
-COPY --from=builder /app/target/x86_64-unknown-linux-musl/release/oxypress_web_server /app/server
-
-# Copy client static web assets (if Actix serves your Yew bundle)
-# COPY --from=client-builder /app/oxypress_client_web/dist /app/static
+COPY --from=web-builder /app/target/x86_64-unknown-linux-musl/release/oxypress_web_server /oxypress/server
+COPY --from=client-builder /app/crates/oxypress_web_client/dist /oxypress/static
 
 EXPOSE 8080 8081
 USER nonroot:nonroot
