@@ -29,11 +29,11 @@ struct WebServerSelfSignedSSLConfigContext<'a> {
 }
 
 fn main() {
-    println!("cargo:rerun-if-changed=build.rs");
+    // println!("cargo:rerun-if-changed=build.rs");
     // TODO: Hints aren't working. No idea why. Low priority. Investigate later.
-    send_hints_to_rerun_this_script_for_all_files_in_expected_directory(CONFIG_TEMPLATE_SRC);
-    generate_config_files();
-    generate_local_certs();
+    // send_hints_to_rerun_this_script_for_all_files_in_expected_directory(CONFIG_TEMPLATE_SRC);
+    // generate_config_files();
+    // generate_local_certs();
 }
 
 fn send_hints_to_rerun_this_script_for_all_files_in_expected_directory(expected_dir: &str) {

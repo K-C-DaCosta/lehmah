@@ -1,3 +1,25 @@
+[env]
+DOCKER_BUILD_KIT=0
+
+[tasks.dev]
+workspace = false 
+command = "docker"
+args = [
+    "compose",
+    "-f", "docker-compose.base.yaml",
+    "-f", "docker-compose.dev.yaml",
+    "up","-d","--remove-orphans"
+]
+dependencies = ["gen-dev-certs"]
+
+[tasks.gen-dev-certs]
+workspace = false
+command = "cargo"
+args = ["run", "-p","gen_local_certs"]
+
+
+
+
 [tasks.build]
 workspace = false
 command = "docker"
@@ -32,4 +54,3 @@ description = "removes all oxypress images from disk"
 script = '''
 docker image ls | tr -s ' ' | grep -i 'oxypress' | cut -d' ' -f3 | xargs docker rmi -f 2> /dev/null & exit 0
 '''
-
