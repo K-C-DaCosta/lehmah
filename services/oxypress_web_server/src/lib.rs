@@ -1,61 +1,47 @@
 use actix_files::NamedFile;
 use actix_web::{
-    App, HttpRequest, HttpResponse, HttpServer, Responder, error, get, guard, middleware::Logger,
-    post, web,
+    error, get, guard, middleware::Logger, post, web, App, HttpRequest, HttpResponse, HttpServer,
+    Responder,
 };
 
 use oxypress_core::{log::ConsoleColors, loggy};
-use std::{fs, io};
-
-const PHYSICAL_ROOT_DIR: &str = "./resources";
-const DEFAULT_ENV_FILE: &str = "./.env.local.template";
+use std::{fs, io, path::PathBuf};
 
 pub mod routes;
 
+macro_rules! get_env_with_generic_expect {
+    ($env_var:expr) => {
+        std::env::var($env_var).expect(concat!(
+            "Failed to read the enviroment variable: \"",
+            $env_var,
+            "\""
+        ))
+    };
+}
+
 pub fn initalize_oxypress_env_vars() {
-    dotenvy::from_path(match std::env::var("OXYPRESS_ENV_DIR").ok() {
-        Some(env_dir) => env_dir,
+    match std::env::var("OXYPRESS_WEB_ENV_FILE_DIR").ok() {
+        Some(env_dir) => {
+            dotenvy::from_path(env_dir).expect("Failed to read OXYPRESS_WEB_ENV_FILE_DIR.")
+        }
         None => {
             loggy!(
                 ConsoleColors::YELLOW,
-                "Default ENV file selected. Assuming local run."
+                ".ENV file not found. `Makefile.toml` is the single source of truth for all env varibles"
             );
-            String::from(DEFAULT_ENV_FILE)
         }
-    })
-    .unwrap();
+    }
 }
 
 pub fn configure_tls() -> rustls::ServerConfig {
-    let untrusted_certs_dir = std::env::var("OXYPRESS_WEB_UNTRUSTED_CERT_DIRECTORY").ok();
-    let trusted_certs_dir = std::env::var("OXYPRESS_WEB_TRUSTED_CERT_DIRECTORY").ok();
+    let cert_directory = PathBuf::from(get_env_with_generic_expect!("OXYPRESS_WEB_CERT_DIRECTORY"));
 
-    let configured_directory = std::path::PathBuf::from(
-        match (untrusted_certs_dir, trusted_certs_dir) {
-            (None, None) => {
-                panic!(
-                    "At least one cert directory must be specified. Please make sure the env file is properly configured"
-                );
-            }
-            (Some(untrusted_dir), None) => {
-                loggy!(ConsoleColors::YELLOW, "untrusted_certs selected");
-                untrusted_dir
-            }
-            (Some(untrusted_dir), Some(_)) => {
-                loggy!(ConsoleColors::YELLOW, "untrusted_certs selected");
-                untrusted_dir
-            }
-            (None, Some(trusted_dir)) => {
-                loggy!(ConsoleColors::YELLOW, "trusted_certs selected");
-                trusted_dir
-            }
-        },
+    let mut certs_file = io::BufReader::new(
+        fs::File::open(cert_directory.join("./cert.pem")).expect("Failed to read cert.pem"),
     );
-
-    let mut certs_file =
-        io::BufReader::new(fs::File::open(configured_directory.join("./cert.pem")).unwrap());
-    let mut key_file =
-        io::BufReader::new(fs::File::open(configured_directory.join("./key.pem")).unwrap());
+    let mut key_file = io::BufReader::new(
+        fs::File::open(cert_directory.join("./key.pem")).expect("Failed to read key.pem"),
+    );
 
     // load TLS certs and key
     // to create a self-signed temporary cert for testing:
@@ -73,4 +59,9 @@ pub fn configure_tls() -> rustls::ServerConfig {
         .with_no_client_auth()
         .with_single_cert(tls_certs, rustls::pki_types::PrivateKeyDer::Pkcs8(tls_key))
         .unwrap()
+}
+
+pub fn translate_to_physical<P: AsRef<std::path::Path>>(path: P) -> std::path::PathBuf {
+    let web_root = std::path::PathBuf::from(get_env_with_generic_expect!("OXYPRESS_WEB_ROOT"));
+    web_root.join(path)
 }

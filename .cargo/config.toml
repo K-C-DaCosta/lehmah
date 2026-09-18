@@ -2,5 +2,9 @@
 #target = "wasm32-unknown-unknown"
 
 [target.x86_64-unknown-linux-musl]
-linker = "musl-gcc"
-rustflags = ["-C", "target-feature=+crt-static", "-C", "link-arg=-static"]
+#linker = "musl-gcc"
+rustflags = [
+    "-C", "target-feature=+crt-static", 
+    "-C", "relocation-model=static",
+    "-C", "link-arg=-Wl,-z,stack-size=2097152"
+]

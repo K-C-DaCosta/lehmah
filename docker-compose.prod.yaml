@@ -5,3 +5,7 @@ services:
       target: prod
     volumes:
       - ./certs/dev:/etc/ssl/certs:ro
+  oxypress_web_server_db:
+    image: oxypress_web_server_db:prod
+    build:
+      target: prod

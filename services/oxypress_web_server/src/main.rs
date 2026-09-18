@@ -29,7 +29,6 @@ async fn main() -> std::io::Result<()> {
         .unwrap();
 
     initalize_oxypress_env_vars();
-    initalize_server_cwd()?;
 
     // set up TLS config options
     let tls_config = oxypress_web_server::configure_tls();
@@ -80,27 +79,4 @@ async fn main() -> std::io::Result<()> {
     .await
 }
 
-fn initalize_server_cwd() -> std::io::Result<()> {
-    let cwd = std::env::current_dir()?;
 
-    let relative_dir = match std::env::var("OXYPRESS_WEB_CWD_RELATIVE") {
-        Ok(text) => text,
-        Err(err) => {
-            loggy!(
-                ConsoleColors::RED,
-                "OXYPRESS_WEB_CWD_RELATIVE ERR: {:?}",
-                err
-            );
-            panic!("{:?}", err);
-        }
-    };
-
-    std::env::set_current_dir(cwd.join(relative_dir))?;
-
-    loggy!(
-        ConsoleColors::YELLOW,
-        "Servers CWD set to: {:?}",
-        std::env::current_dir().unwrap(),
-    );
-    Ok(())
-}

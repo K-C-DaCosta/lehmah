@@ -36,7 +36,25 @@ workspace = false
 command = "cargo"
 args = ["build", "-p", "oxypress_core", "--target", "x86_64-unknown-linux-musl"]
 
-[tasks.build-server]
+[tasks.run-oxypress-web]
+workspace = false
+dependencies = ["gen-dev-certs"]
+description = "Runs the webserver, directly on the host machine, no sandboxing."
+command = "cargo"
+args = [
+    "run",
+    "-p", "oxypress_web_server",
+    "--target",  "x86_64-unknown-linux-musl"
+]
+
+[tasks.run-oxypress-web.env]
+OXYPRESS_WEB_ROOT = "./services/oxypress_web_server/resources"
+OXYPRESS_WEB_ENABLE_LOGGING = "false"
+OXYPRESS_WEB_HTTP_PORT = "8080"
+OXYPRESS_WEB_HTTPS_PORT = "8081"
+OXYPRESS_WEB_CERT_DIRECTORY = "./certs/dev"
+
+[tasks.build-web-server]
 workspace = false 
 command = "cargo"
 args = ["build", "-p", "oxypress_web_server", "--target", "x86_64-unknown-linux-musl"]

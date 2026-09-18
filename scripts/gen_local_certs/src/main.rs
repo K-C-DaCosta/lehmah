@@ -3,12 +3,7 @@ use std::fs;
 use std::path::Path;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let cert_dir = Path::new("../certs/dev");
-    if cert_dir.join("localhost.pem").exists() {
-        println!("Dev certs already exist.");
-        return Ok(());
-    }
-
+    let cert_dir = Path::new("./certs/dev");
     fs::create_dir_all(cert_dir)?;
 
     let CertifiedKey { cert, key_pair } = generate_simple_self_signed(
@@ -18,8 +13,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             .map(String::from)
             .collect::<Vec<_>>(),
     )?;
-    fs::write(cert_dir.join("localhost.pem"), cert.pem())?;
-    fs::write(cert_dir.join("localhost-key.pem"), key_pair.serialize_pem())?;
+    fs::write(cert_dir.join("cert.pem"), cert.pem())?;
+    fs::write(cert_dir.join("key.pem"), key_pair.serialize_pem())?;
     println!("Successfully generated dev certs in ./certs/dev/");
     Ok(())
 }
