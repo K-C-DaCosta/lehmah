@@ -36,17 +36,17 @@ FROM gcr.io/distroless/static-debian12:debug AS dev
 WORKDIR /app
 # Copy binary from builder
 COPY --from=web-builder /app/target/x86_64-unknown-linux-musl/release/oxypress_web_server /oxypress/server
-COPY --from=client-builder /app/crates/oxypress_web_client/dist /oxypress/static
+COPY --from=client-builder /app/crates/oxypress_web_client/dist /oxypress/resources/static
+# Use auto-generated self-signed certs to run locally 
+COPY ./certs/dev/ /etc/ssl/certs
 
 
 FROM gcr.io/distroless/static-debian12 AS prod
 WORKDIR /app
 # Copy binary from builder
 COPY --from=web-builder /app/target/x86_64-unknown-linux-musl/release/oxypress_web_server /oxypress/server
-COPY --from=client-builder /app/crates/oxypress_web_client/dist /oxypress/static
-
+COPY --from=client-builder /app/crates/oxypress_web_client/dist /oxypress/resources/static
 
 EXPOSE 8080 8081
 USER nonroot:nonroot
-
-CMD ["/app/server"]
+CMD ["/oxypress/server"]

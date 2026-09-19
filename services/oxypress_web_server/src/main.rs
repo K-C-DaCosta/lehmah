@@ -1,4 +1,4 @@
-use actix_web::{App, HttpServer, guard, middleware::Logger, web};
+use actix_web::{guard, middleware::Logger, web, App, HttpServer};
 use oxypress_core::{log::ConsoleColors, loggy};
 use oxypress_web_server::{initalize_oxypress_env_vars, routes};
 use std::env;
@@ -30,12 +30,18 @@ async fn main() -> std::io::Result<()> {
 
     initalize_oxypress_env_vars();
 
+    let env_ctx = actix_web::web::Data::new(
+        envy::from_env::<oxypress_web_server::EnvConfig>()
+            .expect("Found unexpected enviroment variables."),
+    );
+
     // set up TLS config options
-    let tls_config = oxypress_web_server::configure_tls();
+    let tls_config = oxypress_web_server::configure_tls(env_ctx.clone());
     env_logger::init_from_env(env_logger::Env::new().default_filter_or("info"));
 
     HttpServer::new(move || {
         App::new()
+            .app_data(env_ctx.clone())
             // .wrap(Logger::new("%a \"%r\" %s %b \"%{Referer}i\" \"%{User-Agent}i\" %T host=%{HOST}i"))
             .service(
                 web::scope("")
@@ -78,5 +84,3 @@ async fn main() -> std::io::Result<()> {
     .run()
     .await
 }
-
-

@@ -4,8 +4,18 @@ use actix_web::{
     Responder,
 };
 
-use oxypress_core::{log::ConsoleColors, loggy};
+use oxypress_core::{log::ConsoleColors, loggy, prelude::*};
+use serde::{Deserialize, Serialize};
 use std::{fs, io, path::PathBuf};
+
+#[derive(Deserialize)]
+pub struct EnvConfig {
+    pub oxypress_web_root: PathBuf,
+    pub oxypress_web_enable_logging: bool,
+    pub oxypress_web_http_port: u32,
+    pub oxypress_web_https_port: u32,
+    pub oxypress_web_cert_directory: PathBuf,
+}
 
 pub mod routes;
 
@@ -25,16 +35,13 @@ pub fn initalize_oxypress_env_vars() {
             dotenvy::from_path(env_dir).expect("Failed to read OXYPRESS_WEB_ENV_FILE_DIR.")
         }
         None => {
-            loggy!(
-                ConsoleColors::YELLOW,
-                ".ENV file not found. `Makefile.toml` is the single source of truth for all env varibles"
-            );
+            loggy!(ConsoleColors::YELLOW, ".ENV file not found");
         }
     }
 }
 
-pub fn configure_tls() -> rustls::ServerConfig {
-    let cert_directory = PathBuf::from(get_env_with_generic_expect!("OXYPRESS_WEB_CERT_DIRECTORY"));
+pub fn configure_tls(env_ctx: web::Data<EnvConfig>) -> rustls::ServerConfig {
+    let cert_directory = &env_ctx.oxypress_web_cert_directory;
 
     let mut certs_file = io::BufReader::new(
         fs::File::open(cert_directory.join("./cert.pem")).expect("Failed to read cert.pem"),
@@ -61,7 +68,9 @@ pub fn configure_tls() -> rustls::ServerConfig {
         .unwrap()
 }
 
-pub fn translate_to_physical<P: AsRef<std::path::Path>>(path: P) -> std::path::PathBuf {
-    let web_root = std::path::PathBuf::from(get_env_with_generic_expect!("OXYPRESS_WEB_ROOT"));
-    web_root.join(path)
+pub fn translate_to_physical<P: AsRef<std::path::Path>>(
+    env_ctx: web::Data<EnvConfig>,
+    path: P,
+) -> std::path::PathBuf {
+    env_ctx.oxypress_web_root.join(path)
 }

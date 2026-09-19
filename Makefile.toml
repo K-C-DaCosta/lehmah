@@ -12,13 +12,13 @@ args = [
 ]
 dependencies = ["gen-dev-certs"]
 
+
+
+
 [tasks.gen-dev-certs]
 workspace = false
 command = "cargo"
 args = ["run", "-p","gen_local_certs"]
-
-
-
 
 [tasks.build]
 workspace = false

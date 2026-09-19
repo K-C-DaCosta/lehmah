@@ -4,10 +4,8 @@ use actix_web::{
     Responder,
 };
 use oxypress_core::{log::*, loggy};
-use super::{
-    translate_to_physical
-};
-use std::{fs, io};
+
+use super::{translate_to_physical, EnvConfig};
 
 pub struct UserSessionContext {}
 
@@ -22,14 +20,17 @@ where
 }
 
 #[get("/")]
-async fn homepage(req: HttpRequest) -> actix_web::Result<NamedFile> {
+async fn homepage(
+    env_ctx: web::Data<EnvConfig>,
+    req: HttpRequest,
+) -> actix_web::Result<NamedFile> {
     let req_ref = &req;
     if let Some(val) = req.headers().get("host") {
         let host_value = val.to_str().unwrap();
         loggy!(ConsoleColors::YELLOW, "host header = {}", host_value);
     }
     loggy!(ConsoleColors::YELLOW, "homepage requested!");
-    let path = translate_to_physical("homepage.html");
+    let path = translate_to_physical(env_ctx, "homepage.html");
     authenticate(req_ref, move |_ctx| async {
         NamedFile::open(path).map_err(|e| error::ErrorNotFound(format!("{:?}", e)))
     })
@@ -37,10 +38,13 @@ async fn homepage(req: HttpRequest) -> actix_web::Result<NamedFile> {
 }
 
 #[get("/")]
-async fn blog_homepage(req: HttpRequest) -> actix_web::Result<NamedFile> {
+async fn blog_homepage(
+    req: HttpRequest,
+    env_ctx: web::Data<EnvConfig>,
+) -> actix_web::Result<NamedFile> {
     let req_ref = &req;
     loggy!(ConsoleColors::YELLOW, "BLOG homepage requested!");
-    let path = translate_to_physical("blog_homepage.html");
+    let path = translate_to_physical(env_ctx, "blog_homepage.html");
     authenticate(req_ref, move |_ctx| async {
         NamedFile::open(path).map_err(|e| error::ErrorNotFound(format!("{:?}", e)))
     })
@@ -51,18 +55,17 @@ async fn blog_homepage(req: HttpRequest) -> actix_web::Result<NamedFile> {
 async fn fetch_files_on_disk(
     req: HttpRequest,
     filename: web::Path<String>,
+    env_ctx: web::Data<EnvConfig>,
 ) -> actix_web::Result<NamedFile> {
     let req_ref = &req;
     loggy!(ConsoleColors::YELLOW, "file '{:?}' ", filename);
-    let path = translate_to_physical(filename.as_str());
+    let path = translate_to_physical(env_ctx, filename.as_str());
     loggy!(ConsoleColors::YELLOW, "path = {:?} requested!", path);
     authenticate(req_ref, move |_ctx| async {
         NamedFile::open(path).map_err(|e| error::ErrorNotFound(format!("{:?}", e)))
     })
     .await
 }
-
-
 
 #[test]
 fn chrono_test() {
