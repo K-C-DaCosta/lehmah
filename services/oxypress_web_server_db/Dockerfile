@@ -5,6 +5,6 @@ FROM postgres:16-alpine AS dev
 # Copy automated setup scripts into the postgres initialization hook directory
 COPY ./dev/init.sql /docker-entrypoint-initdb.d/
 
-FROM postgres:16-alpine AS prod
+FROM dev AS prod
 COPY ./prod/init.sql /docker-entrypoint-initdb.d/
 

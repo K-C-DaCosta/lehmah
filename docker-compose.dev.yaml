@@ -5,11 +5,11 @@ services:
       target: dev
     volumes:
       - ./certs/dev:/etc/ssl/certs:ro
-    enviroment:
+    environment:
       OXYPRESS_WEB_ROOT: "/oxypress/resources"
       OXYPRESS_WEB_ENABLE_LOGGING: "false"
-      OXYPRESS_WEB_HTTP_PORT: "8080"
-      OXYPRESS_WEB_HTTPS_PORT: "8081"
+      OXYPRESS_WEB_HTTP_PORT: "80"
+      OXYPRESS_WEB_HTTPS_PORT: "443"
       OXYPRESS_WEB_CERT_DIRECTORY: "/etc/ssl/certs"
   oxypress_web_server_db:
     image: oxypress_web_server_db:dev

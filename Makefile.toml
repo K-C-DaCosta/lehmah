@@ -1,5 +1,16 @@
 [env]
-DOCKER_BUILD_KIT=0
+DOCKER_BUILDKIT=0
+
+
+[tasks.build-dev]
+workspace = false
+command = "docker"
+args = [
+    "compose",
+    "-f", "docker-compose.base.yaml",
+    "-f", "docker-compose.dev.yaml",
+    "build"
+]
 
 [tasks.dev]
 workspace = false 
