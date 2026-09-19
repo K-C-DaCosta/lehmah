@@ -37,6 +37,7 @@ FROM gcr.io/distroless/static-debian13:debug AS dev
 WORKDIR /oxypress
 # Copy binary from builder
 COPY --from=web-builder /app/target/x86_64-unknown-linux-musl/release/oxypress_web_server /oxypress/server
+COPY --from=web-builder /app/services/oxypress_web_server/resources /oxypress/resources
 COPY --from=client-builder /app/crates/oxypress_web_client/dist /oxypress/resources/static
 # Use auto-generated self-signed certs to run locally 
 COPY ./certs/dev/ /etc/ssl/certs

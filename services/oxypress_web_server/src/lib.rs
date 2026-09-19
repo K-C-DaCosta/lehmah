@@ -8,7 +8,7 @@ use oxypress_core::{log::ConsoleColors, loggy, prelude::*};
 use serde::{Deserialize, Serialize};
 use std::{fs, io, path::PathBuf};
 
-#[derive(Deserialize)]
+#[derive(Deserialize,Debug)]
 pub struct EnvConfig {
     pub oxypress_web_root: PathBuf,
     pub oxypress_web_enable_logging: bool,

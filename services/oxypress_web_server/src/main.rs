@@ -34,6 +34,8 @@ async fn main() -> std::io::Result<()> {
         envy::from_env::<oxypress_web_server::EnvConfig>()
             .expect("Found unexpected enviroment variables."),
     );
+    
+    println!("ENV:\n{:?}",env_ctx);
 
     // set up TLS config options
     let tls_config = oxypress_web_server::configure_tls(env_ctx.clone());
@@ -42,7 +44,7 @@ async fn main() -> std::io::Result<()> {
     HttpServer::new(move || {
         App::new()
             .app_data(env_ctx.clone())
-            // .wrap(Logger::new("%a \"%r\" %s %b \"%{Referer}i\" \"%{User-Agent}i\" %T host=%{HOST}i"))
+            .wrap(Logger::new("%a \"%r\" %s %b \"%{Referer}i\" \"%{User-Agent}i\" %T host=%{HOST}i"))
             .service(
                 web::scope("")
                     .guard(guard::Host("local.khadeemdacosta.ca"))
@@ -65,7 +67,7 @@ async fn main() -> std::io::Result<()> {
             .service(routes::fetch_files_on_disk)
     })
     .bind((
-        "khadeemdacosta.ca",
+        "0.0.0.0",
         env::var("OXYPRESS_WEB_HTTP_PORT")
             .unwrap()
             .parse::<_>()
@@ -73,7 +75,7 @@ async fn main() -> std::io::Result<()> {
     ))?
     .bind_rustls_0_23(
         (
-            "khadeemdacosta.ca",
+            "0.0.0.0",
             env::var("OXYPRESS_WEB_HTTPS_PORT")
                 .unwrap()
                 .parse::<_>()
