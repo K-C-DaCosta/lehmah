@@ -23,9 +23,6 @@ args = [
 ]
 dependencies = ["gen-dev-certs",'build-dev']
 
-
-
-
 [tasks.gen-dev-certs]
 workspace = false
 command = "cargo"
