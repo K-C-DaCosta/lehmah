@@ -21,7 +21,7 @@ args = [
     "-f", "docker-compose.dev.yaml",
     "up","-d","--remove-orphans"
 ]
-dependencies = ["gen-dev-certs"]
+dependencies = ["gen-dev-certs",'build-dev']
 
 
 

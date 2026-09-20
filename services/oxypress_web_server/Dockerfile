@@ -5,33 +5,27 @@ RUN apt-get update && apt-get install -y musl-tools && rm -rf /var/lib/apt/lists
 RUN rustup target add x86_64-unknown-linux-musl wasm32-unknown-unknown
 RUN cargo install trunk --locked
 
-
-# Stage 1: build yew front-end for the oxypres
-FROM chef AS client-builder
-WORKDIR /app
-COPY . .
-WORKDIR /app/crates/oxypress_web_client
-COPY --from=chef /usr/local/cargo/bin/trunk /usr/local/cargo/bin/trunk
-RUN trunk build
-
-
 FROM chef AS planner
 COPY . .
 RUN cargo chef prepare --recipe-path recipe.json
 
-# Stage 3: Cache & build statically linked binary
 
 FROM chef AS web-builder
 COPY --from=planner /app/recipe.json recipe.json
-
-# Build dependencies - this layer is cached unless Cargo.toml/Cargo.lock change
-RUN cargo chef cook --release --target x86_64-unknown-linux-musl --recipe-path recipe.json
-
-# Build application
+RUN cargo chef cook --release --target x86_64-unknown-linux-musl --package oxypress_web_server --recipe-path recipe.json
 COPY . .
 RUN cargo build --release --target x86_64-unknown-linux-musl -p oxypress_web_server
 
+FROM chef AS client-builder
+COPY --from=chef /usr/local/cargo/bin/trunk /usr/local/cargo/bin/trunk
+COPY --from=planner /app/recipe.json recipe.json
 
+RUN cargo chef cook --release --package oxypress_web_client --target wasm32-unknown-unknown --recipe-path recipe.json
+COPY ./Cargo.lock  ./crates/oxypress_web_client/Cargo.lock
+COPY crates/oxypress_core ./crates/oxypress_core
+COPY crates/oxypress_web_client ./crates/oxypress_web_client
+WORKDIR /app/crates/oxypress_web_client
+RUN trunk build
 
 FROM gcr.io/distroless/static-debian13:debug AS dev
 WORKDIR /oxypress
