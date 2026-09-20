@@ -3,7 +3,6 @@ cfg_if::cfg_if! {
         pub mod dom_pointer;
         pub mod entry_point;
     }else{
-        use std::collections::VecDeque;
     }
 }
 

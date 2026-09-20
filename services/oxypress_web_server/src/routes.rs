@@ -1,8 +1,5 @@
 use actix_files::NamedFile;
-use actix_web::{
-    error, get, guard, middleware::Logger, post, web, App, HttpRequest, HttpResponse, HttpServer,
-    Responder,
-};
+use actix_web::{error, get, web, HttpRequest};
 use oxypress_core::{log::*, loggy};
 
 use super::{translate_to_physical, EnvConfig};
@@ -20,10 +17,7 @@ where
 }
 
 #[get("/")]
-async fn homepage(
-    env_ctx: web::Data<EnvConfig>,
-    req: HttpRequest,
-) -> actix_web::Result<NamedFile> {
+async fn homepage(env_ctx: web::Data<EnvConfig>, req: HttpRequest) -> actix_web::Result<NamedFile> {
     let req_ref = &req;
     if let Some(val) = req.headers().get("host") {
         let host_value = val.to_str().unwrap();

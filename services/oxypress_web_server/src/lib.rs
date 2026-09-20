@@ -1,14 +1,10 @@
-use actix_files::NamedFile;
-use actix_web::{
-    error, get, guard, middleware::Logger, post, web, App, HttpRequest, HttpResponse, HttpServer,
-    Responder,
-};
+use actix_web::web;
 
 use oxypress_core::{log::ConsoleColors, loggy, prelude::*};
-use serde::{Deserialize, Serialize};
-use std::{fs, io, path::PathBuf};
+use serde::Deserialize;
+use std::{fmt::Debug, fs, io, path::PathBuf};
 
-#[derive(Deserialize,Debug)]
+#[derive(Deserialize, Debug)]
 pub struct EnvConfig {
     pub oxypress_web_root: PathBuf,
     pub oxypress_web_enable_logging: bool,
@@ -18,16 +14,6 @@ pub struct EnvConfig {
 }
 
 pub mod routes;
-
-macro_rules! get_env_with_generic_expect {
-    ($env_var:expr) => {
-        std::env::var($env_var).expect(concat!(
-            "Failed to read the enviroment variable: \"",
-            $env_var,
-            "\""
-        ))
-    };
-}
 
 pub fn initalize_oxypress_env_vars() {
     match std::env::var("OXYPRESS_WEB_ENV_FILE_DIR").ok() {
