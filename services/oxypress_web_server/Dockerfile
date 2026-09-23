@@ -32,6 +32,9 @@ COPY Cargo.lock ./Cargo.lock
 COPY crates/oxypress_core ./crates/oxypress_core
 COPY services/oxypress_web_server ./services/oxypress_web_server
 
+
+# Tells SQLX to use the type metadata instead to guard against type drift
+ENV SQLX_OFFLINE=true
 RUN cargo build \ 
     --release \ 
     --target x86_64-unknown-linux-musl \

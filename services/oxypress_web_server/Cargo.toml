@@ -5,8 +5,17 @@ edition = "2024"
 
 [dependencies]
 oxypress_core = { path = "../../crates/oxypress_core" }
-serde = {version = "1.0.0" , features = ["derive"]}
+serde = {version = "1.0.228" , features = ["derive"]}
+webpki-roots = "0.26"
 actix-web = { version = "4.11.0", features = ["rustls-0_23"] }
+sqlx = { version = "0.8", default-features = false, features = [
+    "runtime-tokio", 
+    "tls-rustls",
+    "uuid",
+    "postgres",
+    "macros",
+    "time"
+] }
 actix-files = { version ="0.6.8" }
 env_logger = "0.11.8"
 dotenvy = "0.15.7"
@@ -16,6 +25,7 @@ backtrace = "0.3.75"
 tokio = { version = "*", features = ["full"] }
 chrono = "*"
 envy = "0.4.2"
+uuid = { version = "1.10", features = ["v4", "serde"] }
 
 [build-dependencies]
 oxypress_core = { path = "../../crates/oxypress_core" }

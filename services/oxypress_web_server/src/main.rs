@@ -1,7 +1,12 @@
 use actix_web::{guard, middleware::Logger, web, App, HttpServer};
-use oxypress_web_server::{initalize_oxypress_env_vars, routes};
+use oxypress_core::prelude::uuid::Uuid;
+use oxypress_web_server::{env_config::EnvConfig, routes};
+use sqlx::{
+    pool::PoolOptions,
+    postgres::{PgConnectOptions, PgPoolOptions},
+    ConnectOptions, Connection, Executor, Row,
+};
 use std::env;
-
 
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
@@ -9,23 +14,30 @@ async fn main() -> std::io::Result<()> {
         .install_default()
         .unwrap();
 
-    initalize_oxypress_env_vars();
+    let env_ctx = actix_web::web::Data::new(EnvConfig::get_config_variables());
 
-    let env_ctx = actix_web::web::Data::new(
-        envy::from_env::<oxypress_web_server::EnvConfig>()
-            .expect("Found unexpected enviroment variables."),
-    );
-    
-    println!("ENV:\n{:?}",env_ctx);
+    println!("ENV:\n{:?}", env_ctx);
 
     // set up TLS config options
     let tls_config = oxypress_web_server::configure_tls(env_ctx.clone());
     env_logger::init_from_env(env_logger::Env::new().default_filter_or("info"));
 
+    let pool = PgPoolOptions::new()
+        .connect(&env_ctx.oxypress_database_url)
+        .await
+        .expect("failed to connect to DB");
+
+    let results = sqlx::query!("Select * FROM users")
+        .fetch_all(&pool)
+        .await
+        .expect("Failed to run select query");
+
     HttpServer::new(move || {
         App::new()
             .app_data(env_ctx.clone())
-            .wrap(Logger::new("%a \"%r\" %s %b \"%{Referer}i\" \"%{User-Agent}i\" %T host=%{HOST}i"))
+            .wrap(Logger::new(
+                "%a \"%r\" %s %b \"%{Referer}i\" \"%{User-Agent}i\" %T host=%{HOST}i",
+            ))
             .service(
                 web::scope("")
                     .guard(guard::Host("local.khadeemdacosta.ca"))

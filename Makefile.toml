@@ -1,6 +1,33 @@
 [env]
 DOCKER_BUILDKIT=0
 
+[tasks.sqlx-prepare-all]
+workspace = false
+dependencies = ["oxypress-prepare"]
+
+[tasks.oxypress-prepare]
+workspace = false
+cwd = "./services/oxypress_web_server"
+command = "cargo"
+args = ["sqlx","prepare"]
+
+[tasks.oxypress-sqlx]
+cwd = "./services/oxypress_web_server_db"
+workspace = false 
+command = "cargo"
+args = ["sqlx","${@}"]
+description = "calls sqlx from the oxypress_db directory"
+
+[tasks.install-sqlx-cli]
+workspace = false 
+command = "cargo"
+args = [
+    "install", "sqlx-cli",
+    "--version","0.8.0",
+    "--target", "x86_64-unknown-linux-musl",
+    "--no-default-features",
+    "--features", "postgres,sqlx/tls-rustls"
+]
 
 [tasks.build-dev]
 workspace = false
@@ -11,7 +38,7 @@ args = [
     "-f", "docker-compose.dev.yaml",
     "build"
 ]
-
+dependencies = ['sqlx-prepare-all']
 [tasks.dev]
 workspace = false 
 command = "docker"
@@ -22,6 +49,7 @@ args = [
     "up","-d","--remove-orphans"
 ]
 dependencies = ["gen-dev-certs",'build-dev']
+
 
 [tasks.gen-dev-certs]
 workspace = false

@@ -1,30 +1,13 @@
-use actix_web::web;
 
+pub mod routes;
+pub mod env_config;
+
+use actix_web::web;
 use oxypress_core::{log::ConsoleColors, loggy, prelude::*};
 use serde::Deserialize;
 use std::{fmt::Debug, fs, io, path::PathBuf};
+use env_config::EnvConfig; 
 
-#[derive(Deserialize, Debug)]
-pub struct EnvConfig {
-    pub oxypress_web_root: PathBuf,
-    pub oxypress_web_enable_logging: bool,
-    pub oxypress_web_http_port: u32,
-    pub oxypress_web_https_port: u32,
-    pub oxypress_web_cert_directory: PathBuf,
-}
-
-pub mod routes;
-
-pub fn initalize_oxypress_env_vars() {
-    match std::env::var("OXYPRESS_WEB_ENV_FILE_DIR").ok() {
-        Some(env_dir) => {
-            dotenvy::from_path(env_dir).expect("Failed to read OXYPRESS_WEB_ENV_FILE_DIR.")
-        }
-        None => {
-            loggy!(ConsoleColors::YELLOW, ".ENV file not found");
-        }
-    }
-}
 
 pub fn configure_tls(env_ctx: web::Data<EnvConfig>) -> rustls::ServerConfig {
     let cert_directory = &env_ctx.oxypress_web_cert_directory;
