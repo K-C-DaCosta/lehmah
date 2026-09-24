@@ -12,11 +12,12 @@ command = "cargo"
 args = ["sqlx","prepare"]
 
 [tasks.oxypress-sqlx]
-cwd = "./services/oxypress_web_server_db"
+cwd = "./services/oxypress_web_server"
 workspace = false 
 command = "cargo"
 args = ["sqlx","${@}"]
-description = "calls sqlx from the oxypress_db directory"
+description = "Enables you to call sqlx commands for oxypress from root"
+
 
 [tasks.install-sqlx-cli]
 workspace = false 
