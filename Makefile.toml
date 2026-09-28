@@ -12,7 +12,7 @@ command = "cargo"
 args = ["sqlx","prepare"]
 
 [tasks.oxypress-sqlx]
-cwd = "./services/oxypress_web_server"
+cwd = "./services/oxypress_web_server_db"
 workspace = false 
 command = "cargo"
 args = ["sqlx","${@}"]
