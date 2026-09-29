@@ -9,7 +9,8 @@ services:
       OXYPRESS_WEB_HTTP_PORT: "8080"
       OXYPRESS_WEB_HTTPS_PORT: "8081"
       OXYPRESS_WEB_CERT_DIRECTORY: "/etc/ssl/certs"
-      OXYPRESS_DATABASE_URL: postgres://testdev:testdev@oxypress_web_server_db:5432/oxypress_dev
+      OXYPRESS_WEB_DATABASE_URL: postgres://testdev:testdev@oxypress_web_server_db:5432/oxypress_dev
+      OXYPRESS_WEB_HOSTNAME: "khadeemdacosta.ca"
   oxypress_web_server_db:
     image: oxypress_web_server_db:dev
     environment:
