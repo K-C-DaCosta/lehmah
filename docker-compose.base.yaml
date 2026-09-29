@@ -1,3 +1,4 @@
+name: lehmah 
 services:
   oxypress_web_server:
     image: oxypress_web_server

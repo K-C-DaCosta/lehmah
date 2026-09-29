@@ -24,7 +24,7 @@ async fn homepage(env_ctx: web::Data<EnvConfig>, req: HttpRequest) -> actix_web:
         loggy!(ConsoleColors::YELLOW, "host header = {}", host_value);
     }
     loggy!(ConsoleColors::YELLOW, "homepage requested!");
-    let path = translate_to_physical(env_ctx, "homepage.html");
+    let path = translate_to_physical(env_ctx, "static/index.html");
     authenticate(req_ref, move |_ctx| async {
         NamedFile::open(path).map_err(|e| error::ErrorNotFound(format!("{:?}", e)))
     })
