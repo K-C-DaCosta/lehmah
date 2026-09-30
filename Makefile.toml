@@ -30,6 +30,29 @@ args = [
     "--features", "postgres,sqlx/tls-rustls"
 ]
 
+[tasks.dev-init]
+workspace = false
+command = "docker"
+args = [
+    "compose",
+    "-f", "docker-compose.base.yaml",
+    "-f", "docker-compose.dev.yaml",
+    "up", "-d", "--remove-orphans"
+]
+description = "Launch containers for when the database isn't up yet"
+
+[tasks.build-dev-init]
+workspace = false
+command = "docker"
+args = [
+    "compose",
+    "-f", "docker-compose.base.yaml",
+    "-f", "docker-compose.dev.yaml",
+    "build"
+]
+description ="when we're starting from scratch we dont need to prepare anything"
+
+
 [tasks.build-dev]
 workspace = false
 command = "docker"
@@ -40,6 +63,8 @@ args = [
     "build"
 ]
 dependencies = ['sqlx-prepare-all']
+
+
 [tasks.dev]
 workspace = false 
 command = "docker"
@@ -51,6 +76,15 @@ args = [
 ]
 dependencies = ["gen-dev-certs",'build-dev']
 
+[tasks.dev-down]
+workspace = false 
+command = "docker"
+args = [
+    "compose",
+    "-f", "docker-compose.base.yaml",
+    "-f", "docker-compose.dev.yaml",
+    "down", "--remove-orphans"
+]
 
 [tasks.gen-dev-certs]
 workspace = false

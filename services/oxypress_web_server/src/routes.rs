@@ -1,8 +1,8 @@
 use actix_files::NamedFile;
-use actix_web::{error, get, web, HttpRequest};
+use actix_web::{HttpRequest, error, get, web};
 use oxypress_core::{log::*, loggy};
 
-use super::{translate_to_physical, EnvConfig};
+use super::{EnvConfig, translate_to_physical};
 
 pub struct UserSessionContext {}
 

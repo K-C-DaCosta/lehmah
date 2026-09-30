@@ -1,10 +1,10 @@
-use actix_web::{guard, middleware::Logger, web, App, HttpServer};
+use actix_web::{App, HttpServer, guard, middleware::Logger, web};
 use oxypress_core::prelude::uuid::Uuid;
 use oxypress_web_server::{env_config::EnvConfig, routes};
 use sqlx::{
+    ConnectOptions, Connection, Executor, Row,
     pool::PoolOptions,
     postgres::{PgConnectOptions, PgPoolOptions},
-    ConnectOptions, Connection, Executor, Row,
 };
 
 #[actix_web::main]
@@ -36,8 +36,8 @@ async fn main() -> std::io::Result<()> {
         .await
         .expect("Failed to run select query");
     // Dump vec of results into STDOUT just to check
-    for result in results{
-        println!("{:?}",result);
+    for result in results {
+        println!("{:?}", result);
     }
 
     HttpServer::new(move || {

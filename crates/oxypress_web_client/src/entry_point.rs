@@ -1,5 +1,5 @@
-use bitflags::bitflags;
 use super::dom_pointer::*;
+use bitflags::bitflags;
 use oxypress_core::DomPointer;
 use web_sys::{
     Document, Element, NodeFilter, TreeWalker, console,
@@ -220,5 +220,3 @@ pub fn App() -> Html {
         </document-editor-frame>
     }
 }
-
-

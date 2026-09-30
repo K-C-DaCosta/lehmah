@@ -1,13 +1,11 @@
-
-pub mod routes;
 pub mod env_config;
+pub mod routes;
 
 use actix_web::web;
+use env_config::EnvConfig;
 use oxypress_core::{log::ConsoleColors, loggy, prelude::*};
 use serde::Deserialize;
 use std::{fmt::Debug, fs, io, path::PathBuf};
-use env_config::EnvConfig; 
-
 
 pub fn configure_tls(env_ctx: web::Data<EnvConfig>) -> rustls::ServerConfig {
     let cert_directory = &env_ctx.oxypress_web_cert_directory;
