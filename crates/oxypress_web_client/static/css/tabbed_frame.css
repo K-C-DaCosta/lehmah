@@ -63,5 +63,5 @@ tabbed-frame frame-body {
 }
 
 .tab_currently_active {
-    background-color: pink;
+    background-color: var(--color-theme-2);
 }

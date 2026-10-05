@@ -1,32 +1,24 @@
 use std::{ops::Deref, rc::Rc};
 use yew::{prelude::*, Callback, Properties};
 
-use crate::components::tabbed_frame::_TabElemParam::parent_state;
 
 #[derive(Clone, PartialEq, Properties)]
-pub struct TabElemParam<ParentState>
+pub struct TabElemParam<ExtState>
 where
-    ParentState: PartialEq + 'static,
+    ExtState: PartialEq + 'static,
 {
     pub tab_idx: usize,
-    pub active_tab_idx:usize,
+    pub active_tab_idx: usize,
     pub tab_name: AttrValue,
-    pub tab_content: Callback<UseStateHandle<ParentState>, Html>,
+    pub tab_content: Callback<UseStateHandle<ExtState>, Html>,
     pub frame_state: UseStateHandle<TabbedFrameState>,
-    pub parent_state: UseStateHandle<ParentState>,
-}
-
-#[derive(Clone)]
-pub struct TabElemState<ParentState> {
-    pub tab_name: AttrValue,
-    pub tab_content: TabCallback<ParentState>,
-    pub frame_state: UseStateHandle<TabbedFrameState>,
+    pub parent_state: UseStateHandle<ExtState>,
 }
 
 #[function_component]
-pub fn TabElem<ParentState>(p: &TabElemParam<ParentState>) -> Html
+pub fn TabElem<ExtState>(p: &TabElemParam<ExtState>) -> Html
 where
-    ParentState: PartialEq + 'static,
+    ExtState: PartialEq + 'static,
 {
     // We only need local state if something *inside* TabElem changes independently.
     // For things passed down from props, read them straight from `p`.
@@ -58,34 +50,13 @@ pub struct TabbedFrameState {
     active_tab_idx: usize,
 }
 
-pub struct TabCallback<ParentState> {
-    inner: fn(UseStateHandle<ParentState>) -> Html,
-}
-impl<ParentState> TabCallback<ParentState> {
-    pub fn new(inner: fn(UseStateHandle<ParentState>) -> Html) -> Self {
-        Self { inner }
-    }
-}
-impl<ParentState> Clone for TabCallback<ParentState> {
-    fn clone(&self) -> Self {
-        Self { inner: self.inner }
-    }
-}
-
-impl<ParentState> Deref for TabCallback<ParentState> {
-    type Target = fn(UseStateHandle<ParentState>) -> Html;
-    fn deref(&self) -> &Self::Target {
-        &self.inner
-    }
-}
-
 #[derive(PartialEq)]
-pub struct TabEntry<ParentState> {
+pub struct TabEntry<ExtState> {
     pub tab_name: AttrValue,
-    pub tab_content: Callback<UseStateHandle<ParentState>, Html>,
+    pub tab_content: Callback<UseStateHandle<ExtState>, Html>,
 }
 
-impl<ParentState> Clone for TabEntry<ParentState> {
+impl<ExtState> Clone for TabEntry<ExtState> {
     fn clone(&self) -> Self {
         Self {
             tab_name: self.tab_name.clone(),
@@ -95,29 +66,30 @@ impl<ParentState> Clone for TabEntry<ParentState> {
 }
 
 #[derive(PartialEq, Properties)]
-pub struct TabbedFrameParams<ParentState>
+pub struct TabbedFrameParams<ExtState>
 where
-    ParentState: PartialEq,
+    ExtState: PartialEq,
 {
-    pub parent_state: UseStateHandle<ParentState>,
+    pub parent_state: UseStateHandle<ExtState>,
     #[prop_or_default]
-    pub tabs: Vec<TabEntry<ParentState>>,
+    pub tabs: Vec<TabEntry<ExtState>>,
     #[prop_or_default]
     pub children: Option<Html>,
 }
 
 #[function_component]
-pub fn TabbedFrame<ParentState>(p: &TabbedFrameParams<ParentState>) -> Html
+pub fn TabbedFrame<ExtState>(p: &TabbedFrameParams<ExtState>) -> Html
 where
-    ParentState: PartialEq + 'static,
+    ExtState: PartialEq + 'static,
 {
     let state = use_state(|| TabbedFrameState { active_tab_idx: 0 });
+    let tab_len = p.tabs.len();
 
     let tab_elem_iter = p.tabs.clone().into_iter().enumerate().map({
         let state = state.clone();
         move |(idx, tab_entry)| {
             html! {
-                <TabElem::<ParentState>
+                <TabElem::<ExtState>
                     tab_idx={idx}
                     active_tab_idx={state.active_tab_idx}
                     parent_state={p.parent_state.clone()}
@@ -128,11 +100,24 @@ where
             }
         }
     });
-    let active_tab_content = p.tabs[state.active_tab_idx]
-        .tab_content
-        .emit(p.parent_state.clone());
+    let onwheel = Callback::from({
+        let state = state.clone();
+        move |event: web_sys::WheelEvent| {
+            let offset = event.delta_y().signum() as isize;
+            let new_idx =
+                (state.active_tab_idx as isize + offset).rem_euclid(tab_len as isize) as usize;
+            state.set(TabbedFrameState {
+                active_tab_idx: new_idx,
+            });
+        }
+    });
+    let active_tab_content = p
+        .tabs
+        .get(state.active_tab_idx)
+        .map(|tab| tab.tab_content.emit(p.parent_state.clone()))
+        .unwrap_or_else(|| html! {<>{"Warning: the frame is empty, probably not intended"}</>});
     html! {
-        <tabbed-frame>
+        <tabbed-frame {onwheel}>
             <tab-container>
                 {for tab_elem_iter}
             </tab-container>

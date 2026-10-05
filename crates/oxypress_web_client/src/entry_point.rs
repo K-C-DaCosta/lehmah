@@ -1,7 +1,7 @@
 use std::{ops::Deref, rc::Rc};
 
 use super::dom_pointer::*;
-use crate::components::tabbed_frame::{TabCallback, TabElemParam, TabEntry, TabbedFrame};
+use crate::components::tabbed_frame::{TabElemParam, TabEntry, TabbedFrame};
 use bitflags::bitflags;
 use oxypress_core::DomPointer;
 use web_sys::{
@@ -10,7 +10,7 @@ use web_sys::{
     wasm_bindgen::{self, prelude::Closure, JsCast, JsValue},
     Document, Element, NodeFilter, TreeWalker,
 };
-use yew::{prelude::*, Callback, Properties};
+use yew::{prelude::*, Callback, ContextProvider, Properties};
 
 fn console_log(text: String) {
     console::log_1(&JsValue::from_str(&text));
@@ -33,31 +33,45 @@ impl RadioComponentState {
     }
 }
 
-#[derive(Properties, PartialEq, Default)]
-pub struct RadioProps {
+#[derive(Properties, PartialEq)]
+pub struct RadioProps<ExtState>
+where
+    ExtState: PartialEq,
+{
     #[prop_or_default]
     pub is_loading: bool,
     #[prop_or_default]
     pub channels: u32,
     #[prop_or_default]
     pub children: Html,
+    pub get_count: Callback<UseStateHandle<ExtState>, i32>,
+    pub onclick: Callback<UseStateHandle<ExtState>, ()>,
+    pub ext_state: UseStateHandle<ExtState>,
 }
 
 #[function_component]
-pub fn RadioComponent(p: &RadioProps) -> Html {
-    let state = use_state(|| RadioComponentState::new());
+pub fn RadioComponent<ExtState>(p: &RadioProps<ExtState>) -> Html
+where
+    ExtState: PartialEq + 'static,
+{
+    let ext_state = p.ext_state.clone();
+    let get_count = p.get_count.clone();
+    let local_state = use_state(|| RadioComponentState::new());
+
     let onclick = Callback::from({
-        let state = state.clone();
+        let onclick = p.onclick.clone();
+        let ext_state = ext_state.clone();
         move |_| {
-            state.set(state.deref().clone().offset_count(1));
+            onclick.emit(ext_state.clone());
         }
     });
+
     html! {
         <radio-component>
             {"This is a radio component"}<br/>
             {"loading = "}{p.is_loading}<br/>
-            {"radio count:"}{state.count}<br/>
-            <input {onclick} type="button" value="mutate"/><br/>
+            {"radio count:"}{get_count.emit(ext_state.clone())}<br/>
+            <input onclick={onclick} type="button" value="mutate"/><br/>
             {p.children.clone()}
         </radio-component>
     }
@@ -66,25 +80,36 @@ pub fn RadioComponent(p: &RadioProps) -> Html {
 #[derive(Clone, PartialEq)]
 pub struct AppState {
     count: i32,
+    radio_count: i32,
 }
 impl AppState {
+    pub fn new() -> Self {
+        Self {
+            count: 0,
+            radio_count: 0,
+        }
+    }
     pub fn increment(&self) -> Self {
         let old_self = self;
         let mut new_self = old_self.clone();
         new_self.count = old_self.count + 1;
         new_self
     }
+    pub fn offset_radio(&self) -> Self {
+        let mut old = self.clone();
+        old.radio_count += 1;
+        old
+    }
+}
+impl Default for AppState {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 #[function_component]
 pub fn App() -> Html {
-    let state = use_state(|| AppState { count: 0 });
-    let onclick = Callback::from({
-        let state = state.clone();
-        move |_| {
-            state.set(state.increment());
-        }
-    });
+    let state = use_state(|| AppState::new());
 
     let tabs = vec![
         TabEntry {
@@ -101,7 +126,21 @@ pub fn App() -> Html {
                 |parent_state: UseStateHandle<AppState>| {
                     html! {
                         <>
-                            <RadioComponent/>
+                            <RadioComponent::<AppState>
+                                get_count={
+                                    Callback::from(|state:UseStateHandle<AppState>|{
+                                        state.radio_count
+                                    })
+                                }
+                                ext_state={
+                                    parent_state.clone()
+                                }
+                                onclick={
+                                    Callback::from(|state:UseStateHandle<AppState>|{
+                                        state.set(state.deref().offset_radio());
+                                    })
+                                }
+                            />
                         </>
                     }
                 }
@@ -120,11 +159,6 @@ pub fn App() -> Html {
     html! {
         <>
             <TabbedFrame::<AppState> {tabs} parent_state={state.clone()}/>
-            <div class="test">
-                <input {onclick} type="button" value="Increment"/><br/>
-                <p>{"hello world"}{state.count}</p>
-            </div>
-
         </>
     }
 }
