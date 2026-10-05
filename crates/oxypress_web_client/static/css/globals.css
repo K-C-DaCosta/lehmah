@@ -1,0 +1,13 @@
+:root{
+    --color-theme-1: #000000;
+    --color-theme-2:#830000;
+    --color-theme-3: #BC0202;
+    --color-theme-4:#FF0000;
+    --std-radius: 2px;
+}
+
+body {
+    display: flex;
+    background: var(--color-theme-1);
+    border: thin solid white;
+}

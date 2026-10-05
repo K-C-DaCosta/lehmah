@@ -5,3 +5,4 @@ public_url = "/static/"
 
 [serve]
 port = 8000
+no_spa = true

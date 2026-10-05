@@ -1,0 +1,67 @@
+
+tabbed-frame {
+    display:flex;
+    flex-direction:column;
+    border:thin solid yellow;
+    background-color: var(--color-theme-2);
+    color: var(--color-theme-4);
+    border-radius: var(--std-radius);
+}
+
+tabbed-frame tab-container {
+    display: flex;
+    flex-direction: row;
+    justify-content: stretch;
+    align-items: stretch;
+    border: thin solid blue; 
+    border-radius: var(--std-radius); 
+}
+tabbed-frame tab-elem {
+    display: flex;
+    border: thin solid var(--color-theme-4);
+    cursor:pointer;
+    background-color: var(--color-theme-3);
+    color: white;
+    flex:1;
+    justify-content: center;
+    align-items: center;
+    transition: linear 100ms;
+}
+
+tabbed-frame tab-container :first-child {
+    border-radius: var(--std-radius) 0px 0px var(--std-radius);
+    border-width: thin 0px thin thin;
+}
+tabbed-frame tab-container :last-child {
+    border-radius: 0px  var(--std-radius) var(--std-radius) 0px;
+    border-width: thin thin thin 0px;
+}
+
+tabbed-frame tab-container :only-child {
+   border-radius: var(--std-radius);
+   border-width: thin;
+}
+
+tabbed-frame tab-container:has(> :nth-child(2):last-child) > :first-child {
+    border-width: thin;
+}
+
+tabbed-frame tab-elem:hover { 
+    background: var(--color-theme-2);
+    flex-grow:1.5;
+}
+
+tabbed-frame frame-body {
+    display: flex; /*???*/
+    border: thin solid white;
+
+}
+
+.test{
+    color: white;
+    border: thin solid red;
+}
+
+.tab_currently_active {
+    background-color: pink;
+}
