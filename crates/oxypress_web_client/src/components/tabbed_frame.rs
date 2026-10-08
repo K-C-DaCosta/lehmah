@@ -103,6 +103,7 @@ where
     let onwheel = Callback::from({
         let state = state.clone();
         move |event: web_sys::WheelEvent| {
+            event.prevent_default();
             let offset = event.delta_y().signum() as isize;
             let new_idx =
                 (state.active_tab_idx as isize + offset).rem_euclid(tab_len as isize) as usize;

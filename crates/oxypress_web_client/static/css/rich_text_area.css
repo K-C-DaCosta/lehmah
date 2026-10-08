@@ -1,0 +1,42 @@
+rich-text-area {
+    display:flex;
+    flex-direction: column;
+    border:thin solid blue;
+    width: 100%;
+}
+rich-text-area > tool-container {
+    display: flex;
+    flex-direction: row;
+    justify-content: flex-start;
+    border: thin solid pink;
+}
+rich-text-area text-tool {
+    display: flex;
+    border: thin solid white;
+    cursor: pointer;
+    justify-content: center;
+    align-items: center;
+}
+
+rich-text-area tool-container text-tool:has( .italics-tool ){
+    padding: 5px;
+}
+
+rich-text-area tool-container text-tool:has( .gg-format-underline){
+    padding: 5px 2px 5px 2px;
+}
+
+rich-text-area tool-container text-tool:has( .gg-layout-list){
+    padding: 5px 5px 5px 5px;
+}
+
+rich-text-area tool-container .active-tool { 
+    background-color: pink;
+}
+
+rich-text-area text-container {
+    background: var(--color-theme-2);
+    color:black;
+}
+
+

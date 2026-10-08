@@ -1,7 +1,11 @@
 use std::{ops::Deref, rc::Rc};
 
 use super::dom_pointer::*;
-use crate::components::tabbed_frame::{TabElemParam, TabEntry, TabbedFrame};
+use crate::components::{
+    rich_text_area::RichTextArea,
+    tabbed_frame::{TabElemParam, TabEntry, TabbedFrame},
+};
+
 use bitflags::bitflags;
 use oxypress_core::DomPointer;
 use web_sys::{
@@ -116,7 +120,9 @@ pub fn App() -> Html {
             tab_name: AttrValue::Static("Tab 1"),
             tab_content: Callback::from(|parent_state| {
                 html! {
-                    <>{"This is the content for tab1"}</>
+                    <>
+                        <RichTextArea/>
+                    </>
                 }
             }),
         },

@@ -6,6 +6,8 @@ tabbed-frame {
     background-color: var(--color-theme-2);
     color: var(--color-theme-4);
     border-radius: var(--std-radius);
+    width: 500px;
+    max-width: 100%;
 }
 
 tabbed-frame tab-container {

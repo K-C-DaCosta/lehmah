@@ -11,6 +11,14 @@ cwd = "./services/oxypress_web_server"
 command = "cargo"
 args = ["sqlx","prepare"]
 
+
+[tasks.run-at-oxypress-client]
+cwd = "./crates/oxypress_web_client"
+workspace = false 
+command ="bash"
+args = ["-c", '"$@"', "bash", "${@}"]
+description = "Enables you to call commands relative to the oxypress web client root"
+
 [tasks.oxypress-sqlx]
 cwd = "./services/oxypress_web_server_db"
 workspace = false 
