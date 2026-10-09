@@ -17,6 +17,7 @@ web-sys = { version = "0.3.80", features = [
     'TreeWalker',
     'NodeFilter',
     'WheelEvent',
+    'KeyEvent',
 ] }
 
 [build-dependencies]

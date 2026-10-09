@@ -106,18 +106,28 @@ pub fn RichTextArea() -> Html {
             }
         }
     });
+
+
+    let onkeydown_input = Callback::from({
+        move |e: web_sys::KeyboardEvent| {
+        }
+    });
+
+
     html! {
         <>
             <rich-text-area>
                 <tool-container>
                     {for tool_iter}
                 </tool-container>
-                <text-container contenteditable="">
-                    {"Hello world"}
+                <text-container>
+                    <text-input onkeydown={onkeydown_input} contenteditable="">
+                        {"sample text"}
+                    </text-input>
+                    <text-output>
+                    </text-output>
                 </text-container>
             </rich-text-area>
         </>
     }
 }
-
-
