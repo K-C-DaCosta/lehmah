@@ -2,6 +2,7 @@ use std::marker::PhantomData;
 
 pub mod bitset;
 pub mod flatforest;
+pub mod ringbuffer;
 
 #[derive(Copy, Clone, Debug)]
 pub struct Ptr<Tag> {

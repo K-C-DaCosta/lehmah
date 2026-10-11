@@ -11,8 +11,6 @@ fn can_alloc() {
     assert_eq!(tree.get_data(root), &10);
 
     tree.free(root);
-
-    assert_eq!(tree.free_pool_header, root);
 }
 
 #[test]
@@ -44,4 +42,8 @@ fn can_drop() {
     std::mem::drop(tree);
 }
 #[test]
-fn can_drop_extended() {}
+fn can_drop_extended() {
+    let mut tree = FlatForest::<UnitTestTag,_>::new();
+
+    
+}

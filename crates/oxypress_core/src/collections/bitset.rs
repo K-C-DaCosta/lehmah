@@ -1,7 +1,56 @@
+#[derive(Copy, Clone, Default, PartialEq, Eq)]
+pub struct BitBlock {
+    data: u64,
+}
+impl BitBlock {
+    pub const fn bit_capacity() -> usize {
+        size_of::<u64>() * 8
+    }
+
+    pub fn calc_position(bit_position: usize) -> BitSetIndex {
+        BitSetIndex {
+            block_idx: bit_position / Self::bit_capacity(),
+            bit_idx: bit_position % Self::bit_capacity(),
+        }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.data == 0
+    }
+    pub fn get_bit(&self, idx: usize) -> u64 {
+        (self.data >> idx) & 1
+    }
+
+    pub fn check_bit(&self, idx: usize) -> bool {
+        self.get_bit(idx) > 0
+    }
+
+    pub fn clear_bit(&mut self, idx: usize) {
+        self.data &= !(1 << idx);
+    }
+    pub fn set_bit(&mut self, idx: usize, val: u64) {
+        let bit_val = (val > 0) as u64;
+        self.clear_bit(idx);
+        self.data |= bit_val << idx;
+    }
+
+    pub fn zero() -> Self {
+        Self { data: 0 }
+    }
+    pub fn bits(&self) -> u64 {
+        self.data
+    }
+}
+
+pub struct BitSetIndex {
+    block_idx: usize,
+    bit_idx: usize,
+}
 pub struct BitSet {
     bit_cursor: usize,
-    blocks: Vec<u64>,
+    blocks: Vec<BitBlock>,
 }
+
 impl BitSet {
     pub fn new() -> Self {
         Self {
@@ -10,15 +59,16 @@ impl BitSet {
         }
     }
     pub fn with_capacity(mut self, bits: usize) -> Self {
-        self.blocks.resize((bits / 64) + (bits % 64).clamp(0, 1), 0);
+        self.blocks
+            .resize(bits.div_ceil(BitBlock::bit_capacity()), BitBlock::zero());
         self
     }
     pub fn bit_capacity(&self) -> usize {
-        self.blocks.len() * 64
+        self.blocks.len() * BitBlock::bit_capacity()
     }
 
     pub fn len_blocks(&self) -> usize {
-        (self.bit_cursor + 63) / 64
+        self.bit_cursor.div_ceil(BitBlock::bit_capacity())
     }
     /// # Description
     /// returns the number of bits the set is currently holding
@@ -31,31 +81,28 @@ impl BitSet {
     }
 
     pub fn push_bit(&mut self, bit_value: u8) {
-        if self.bit_cursor <= self.blocks.len() * 64 {
-            self.blocks.push(0);
+        if self.bit_cursor <= self.blocks.len() * BitBlock::bit_capacity() {
+            self.blocks.push(BitBlock::zero());
         }
-        let bit_value = (bit_value > 0) as u64;
-        let block_idx = self.bit_cursor / 64;
-        let bit_position = self.bit_cursor % 64;
-        self.blocks[block_idx] |= bit_value << bit_position;
-
+        let BitSetIndex { block_idx, bit_idx } = BitBlock::calc_position(self.bit_cursor);
+        self.blocks[block_idx].set_bit(bit_idx, bit_value as u64);
         self.bit_cursor += 1;
     }
-    pub fn get_bit(&self, idx: usize) -> u64 {
-        let block_idx = idx / 64;
-        let bit_idx = idx % 64;
-        (self.blocks[block_idx] >> bit_idx) & 1
-    }
-    pub fn set_bit(&mut self, idx: usize, bit_value: u64) {
-        let bit_value = (bit_value > 0) as u64;
-        let block_idx = idx / 64;
-        let bit_idx = idx % 64;
-        let block = self.blocks[block_idx];
-        let cleared_block = block & (!(1 << bit_idx));
-        self.blocks[block_idx] = cleared_block | (bit_value << bit_idx);
+
+    pub fn check_bit(&self, idx: usize) -> bool {
+        self.get_bit(idx) > 0
     }
 
-    pub fn blocks_iter(&self) -> impl Iterator<Item = &u64> {
+    pub fn get_bit(&self, idx: usize) -> u64 {
+        let BitSetIndex { block_idx, bit_idx } = BitBlock::calc_position(idx);
+        self.blocks[block_idx].get_bit(bit_idx)
+    }
+    pub fn set_bit(&mut self, idx: usize, bit_value: u64) {
+        let BitSetIndex { block_idx, bit_idx } = BitBlock::calc_position(idx);
+        self.blocks[block_idx].set_bit(bit_idx, bit_value);
+    }
+
+    pub fn blocks_iter(&self) -> impl Iterator<Item = &BitBlock> {
         self.blocks.iter().take(self.len_blocks())
     }
 }
@@ -84,11 +131,11 @@ mod tests {
             .iter()
             .copied()
             .collect::<BitSet>();
-        assert_eq!(result.blocks[0], 0b0000_0011_0001_1101);
+        assert_eq!(result.blocks[0].bits(), 0b0000_0011_0001_1101);
         result.set_bit(0, 0);
-        assert_eq!(result.blocks[0], 0b0000_0011_0001_1100);
-        result.set_bit(8,0);
-        assert_eq!(result.blocks[0], 0b0000_0010_0001_1100);
-        assert_eq!(result.len(),11);
+        assert_eq!(result.blocks[0].bits(), 0b0000_0011_0001_1100);
+        result.set_bit(8, 0);
+        assert_eq!(result.blocks[0].bits(), 0b0000_0010_0001_1100);
+        assert_eq!(result.len(), 11);
     }
 }
