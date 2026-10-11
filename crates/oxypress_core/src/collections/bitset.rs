@@ -39,7 +39,7 @@ impl BitSet {
         let bit_position = self.bit_cursor % 64;
         self.blocks[block_idx] |= bit_value << bit_position;
 
-        self.bit_cursor+=1;
+        self.bit_cursor += 1;
     }
     pub fn get_bit(&self, idx: usize) -> u64 {
         let block_idx = idx / 64;
@@ -62,5 +62,33 @@ impl BitSet {
 impl Default for BitSet {
     fn default() -> Self {
         Self::new()
+    }
+}
+impl<T: Into<u8>> FromIterator<T> for BitSet {
+    fn from_iter<I: IntoIterator<Item = T>>(iter: I) -> Self {
+        iter.into_iter().fold(Self::new(), |mut acc, elem| {
+            acc.push_bit(elem.into());
+            acc
+        })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn basic_test() {
+        //     1 1 0 1
+        //
+        let mut result = [1, 0, 1, 1, 1, 0, 0, 0, 1, 1, 0]
+            .iter()
+            .copied()
+            .collect::<BitSet>();
+        assert_eq!(result.blocks[0], 0b0000_0011_0001_1101);
+        result.set_bit(0, 0);
+        assert_eq!(result.blocks[0], 0b0000_0011_0001_1100);
+        result.set_bit(8,0);
+        assert_eq!(result.blocks[0], 0b0000_0010_0001_1100);
+        assert_eq!(result.len(),11);
     }
 }

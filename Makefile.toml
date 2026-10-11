@@ -26,6 +26,20 @@ command = "cargo"
 args = ["sqlx","${@}"]
 description = "Enables you to call sqlx commands for oxypress from root"
 
+[tasks.run-tests]
+workspace = false 
+command = "cargo"
+args = ["test","${@}","--", "--no-capture"]
+env = { "RUSTFLAGS" = "-A warnings" } 
+description = "Runs tests with warnings supressed"
+
+[tasks.run-tests-miri]
+workspace = false 
+script = "cargo +nightly miri test ${@} -- --no-capture"
+env = { "RUSTFLAGS" = "-A warnings" } 
+description = "Runs tests in miri, which works kind of like valgrind"
+
+
 
 [tasks.install-sqlx-cli]
 workspace = false 
