@@ -3,6 +3,11 @@ use std::{
     ops::{Deref, DerefMut},
 };
 
+use crate::collections::{
+    bitset::{BitBlock, PopulatedBlockItem},
+    ringbuffer::RingError,
+};
+
 use super::ringbuffer::RingBuffer;
 use super::{bitset::BitSet, *};
 pub mod children;
@@ -17,30 +22,39 @@ pub enum TakeError {
     AlreadyDropped,
 }
 
+#[derive(Copy, Clone, PartialEq)]
+pub struct BlockIdx(pub usize);
+
 pub struct FreeCache<Tag> {
-    buffer: RingBuffer<[usize; 16]>,
+    buffer: RingBuffer<[BlockIdx; 16]>,
     _tag: PhantomData<Tag>,
 }
 
 impl<Tag> FreeCache<Tag> {
     pub fn new() -> Self {
         Self {
-            buffer: RingBuffer::with_backing([0; 16]),
+            buffer: RingBuffer::with_backing([BlockIdx(0); 16]),
             _tag: PhantomData,
         }
     }
 }
 
-impl  <Tag> Default for FreeCache<Tag> {
+impl<Tag> Default for FreeCache<Tag> {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl<Tag> Iterator for FreeCache<Tag> {
-    type Item = Ptr<Tag>;
-    fn next(&mut self) -> Option<Self::Item> {
-        unimplemented!("IDK fuck man")
+impl<Tag> Deref for FreeCache<Tag> {
+    type Target = RingBuffer<[BlockIdx; 16]>;
+    fn deref(&self) -> &Self::Target {
+        &self.buffer
+    }
+}
+
+impl<Tag> DerefMut for FreeCache<Tag> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.buffer
     }
 }
 
@@ -95,14 +109,48 @@ impl<Tag: Copy, T> FlatForest<Tag, T> {
 
     fn update_freed_cache(&mut self) {
         let cache = &mut self.freed_cache;
-        unimplemented!("needs implementing")
+        let is_free = &mut self.is_freed;
+
+        // cache is still poll-able so skip update
+        if !cache.is_empty() {
+            return;
+        }
+
+        for PopulatedBlockItem { block_idx, .. } in is_free.populated_blocks() {
+            if let Err(RingError::BufferFull) = cache.enqueue(BlockIdx(block_idx)) {
+                break;
+            }
+        }
+    }
+
+    fn poll_cache(&mut self) -> Option<Ptr<Tag>> {
+        let is_freed = &mut self.is_freed;
+        let cache = &mut self.freed_cache;
+        let mut result = Ptr::null();
+        while let Ok(BlockIdx(block_idx)) = cache.dequeue().copied() {
+            let block = &mut is_freed[block_idx];
+            if block.bits() > 0 {
+                for bit_idx in 0..BitBlock::bit_capacity() {
+                    if (block.bits() >> bit_idx) & 1 > 0 {
+                        result = Ptr::from(block_idx * BitBlock::bit_capacity() + bit_idx);
+                        block.set_bit(bit_idx, 0);
+                        break;
+                    }
+                }
+                if block.bits() > 0 {
+                    cache.enqueue(BlockIdx(block_idx)).unwrap();
+                }
+                if result != Ptr::null() {
+                    return Some(result);
+                }
+            }
+        }
+        None
     }
 
     pub fn allocate_node(&mut self, data: T) -> Ptr<Tag> {
         self.update_freed_cache();
-        if let Some(reclaimed_pointer) = self.freed_cache.next() {
-            let reclaimed_pointer = Ptr::null();
-
+        if let Some(reclaimed_pointer) = self.poll_cache() {
             if std::mem::needs_drop::<T>()
                 && self.needs_drop.check_bit(reclaimed_pointer.to_index())
             {
@@ -157,6 +205,18 @@ impl<Tag: Copy, T> FlatForest<Tag, T> {
     }
     pub fn shallow_free(&mut self, ptr: Ptr<Tag>) {
         self.is_freed.set_bit(ptr.to_index(), 0xff);
+    }
+
+    pub fn free_iter(&self) -> impl Iterator<Item = Ptr<Tag>> {
+        self.is_freed
+            .populated_blocks()
+            .flat_map(|elem| {
+                let block_idx = elem.block_idx;
+                (0..64)
+                    .map(move |bit_idx| (((elem.block.bits() >> bit_idx) & 1), block_idx, bit_idx))
+            })
+            .filter(|&(bit, _block_idx, _bit_idx)| bit >= 1)
+            .map(|(_bit, block_idx, bit_idx)| Ptr::from(block_idx * 64 + bit_idx))
     }
 }
 impl<Tag, T> Drop for FlatForest<Tag, T> {

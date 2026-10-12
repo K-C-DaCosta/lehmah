@@ -1,3 +1,4 @@
+#[derive(Copy,Clone,Debug)]
 pub enum RingError {
     BufferFull,
     BufferEmpty,
@@ -32,6 +33,10 @@ where
         self.len() == 0
     }
 
+    pub fn is_full(&self) -> bool {
+        self.len >= self.memory.len()
+    }
+
     pub fn enqueue(&mut self, item: T) -> Result<()> {
         let mem_len = self.memory.len();
         if self.len >= self.memory.len() {
@@ -49,11 +54,17 @@ where
             return Err(RingError::BufferEmpty);
         }
 
-        let fetched_block = &self.memory[self.front % mem_len];
+        let fetched_item = &self.memory[self.front % mem_len];
         self.front = (self.front + 1) % mem_len;
         self.len -= 1;
-        Ok(fetched_block)
+        Ok(fetched_item)
     }
+
+    pub fn peek_front(&self) -> &T {
+        let mem_len = self.memory.len();
+        &self.memory[self.front % mem_len]
+    }
+
     pub fn release(self) -> M {
         self.memory
     }

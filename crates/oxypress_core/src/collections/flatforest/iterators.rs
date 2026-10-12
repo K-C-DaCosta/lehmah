@@ -1,30 +1,47 @@
+use crate::collections::bitset::BitBlock;
+
 use super::*;
 
-pub struct FreedNodesIter<'a, Tag, T> {
-    free_node: Ptr<Tag>,
-    node_world: &'a FlatForest<Tag, T>,
+pub struct FreedBlocksIter<'a> {
+    is_freed: &'a BitSet,
+    block_cursor: usize,
 }
-impl<'a, Tag, T> FreedNodesIter<'a, Tag, T> {
-    pub fn with_node(free_node: Ptr<Tag>, node_world: &'a FlatForest<Tag, T>) -> Self {
+impl<'a> FreedBlocksIter<'a> {
+    pub fn from_forest(is_freed: &'a BitSet) -> Self {
         Self {
-            free_node,
-            node_world,
+            block_cursor: 0,
+            is_freed,
         }
     }
 }
 
-impl<'a, Tag, T> Iterator for FreedNodesIter<'a, Tag, T>
-where
-    Tag: Copy,
+pub struct FreeBlockElem<'a> {
+    pub block: &'a BitBlock,
+    pub block_idx: usize,
+}
+
+impl<'a > Iterator for FreedBlocksIter<'a >
 {
-    type Item = Ptr<Tag>;
+    type Item = FreeBlockElem<'a>;
     fn next(&mut self) -> Option<Self::Item> {
-        let cur = self.free_node;
-        let node_wold = self.node_world;
-        (cur != Ptr::null()).then(|| {
-            let next = node_wold.get_children(cur).first().copied().unwrap();
-            self.free_node = next;
-            cur
-        })
+        let is_freed = &self.is_freed;
+        let block_count = is_freed.len_blocks();
+        let mut block_cursor = self.block_cursor;
+
+        while block_cursor < block_count && is_freed[block_cursor].bits() == 0 {
+            block_cursor += 1;
+        }
+
+        let result =
+            ((block_cursor < block_count) && (is_freed[block_cursor].bits() > 0)).then(|| {
+                FreeBlockElem {
+                    block: &is_freed[block_cursor],
+                    block_idx: block_count,
+                }
+            });
+
+        self.block_cursor = block_cursor + 1;
+
+        result
     }
 }

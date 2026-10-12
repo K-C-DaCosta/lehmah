@@ -1,46 +1,11 @@
-#[derive(Copy, Clone, Default, PartialEq, Eq)]
-pub struct BitBlock {
-    data: u64,
-}
-impl BitBlock {
-    pub const fn bit_capacity() -> usize {
-        size_of::<u64>() * 8
-    }
 
-    pub fn calc_position(bit_position: usize) -> BitSetIndex {
-        BitSetIndex {
-            block_idx: bit_position / Self::bit_capacity(),
-            bit_idx: bit_position % Self::bit_capacity(),
-        }
-    }
+pub mod iterators;
+pub mod bitblock;
 
-    pub fn is_empty(&self) -> bool {
-        self.data == 0
-    }
-    pub fn get_bit(&self, idx: usize) -> u64 {
-        (self.data >> idx) & 1
-    }
 
-    pub fn check_bit(&self, idx: usize) -> bool {
-        self.get_bit(idx) > 0
-    }
+pub use bitblock::*; 
+pub use iterators::*;
 
-    pub fn clear_bit(&mut self, idx: usize) {
-        self.data &= !(1 << idx);
-    }
-    pub fn set_bit(&mut self, idx: usize, val: u64) {
-        let bit_val = (val > 0) as u64;
-        self.clear_bit(idx);
-        self.data |= bit_val << idx;
-    }
-
-    pub fn zero() -> Self {
-        Self { data: 0 }
-    }
-    pub fn bits(&self) -> u64 {
-        self.data
-    }
-}
 
 pub struct BitSetIndex {
     block_idx: usize,
@@ -97,6 +62,7 @@ impl BitSet {
         let BitSetIndex { block_idx, bit_idx } = BitBlock::calc_position(idx);
         self.blocks[block_idx].get_bit(bit_idx)
     }
+
     pub fn set_bit(&mut self, idx: usize, bit_value: u64) {
         let BitSetIndex { block_idx, bit_idx } = BitBlock::calc_position(idx);
         self.blocks[block_idx].set_bit(bit_idx, bit_value);
@@ -104,6 +70,10 @@ impl BitSet {
 
     pub fn blocks_iter(&self) -> impl Iterator<Item = &BitBlock> {
         self.blocks.iter().take(self.len_blocks())
+    }
+
+    pub fn populated_blocks<'a>(&'a self)->impl Iterator<Item = PopulatedBlockItem<'a>> {
+        PopulatedBlocksIter::from_bitset(self)
     }
 }
 impl Default for BitSet {
@@ -119,6 +89,19 @@ impl<T: Into<u8>> FromIterator<T> for BitSet {
         })
     }
 }
+impl std::ops::Index<usize> for BitSet {
+    type Output = BitBlock;
+    fn index(&self, index: usize) -> &Self::Output {
+        &self.blocks[index]
+    }
+}
+impl std::ops::IndexMut<usize> for BitSet {
+    fn index_mut(&mut self, index:usize) -> &mut Self::Output {
+        &mut self.blocks[index]
+    }
+}
+
+
 
 #[cfg(test)]
 mod tests {
@@ -127,8 +110,9 @@ mod tests {
     fn basic_test() {
         //     1 1 0 1
         //
-        let mut result = [1, 0, 1, 1, 1, 0, 0, 0, 1, 1, 0]
+        let mut result = [ 0,0,1,1, 0,0,0,1,  1,1,0,1]
             .iter()
+            .rev()
             .copied()
             .collect::<BitSet>();
         assert_eq!(result.blocks[0].bits(), 0b0000_0011_0001_1101);
