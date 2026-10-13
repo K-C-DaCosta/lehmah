@@ -1,9 +1,18 @@
 use super::*; 
 
+pub struct PopulatedBlockItem<'a> {
+    pub block: &'a BitBlock,
+    pub block_idx: usize,
+}
+
+
+
 pub struct PopulatedBlocksIter<'a> {
     bitset: &'a BitSet,
     block_cursor: usize,
 }
+
+
 impl<'a> PopulatedBlocksIter<'a> {
     pub fn from_bitset(bitset: &'a BitSet) -> Self {
         Self {
@@ -11,11 +20,6 @@ impl<'a> PopulatedBlocksIter<'a> {
             bitset
         }
     }
-}
-
-pub struct PopulatedBlockItem<'a> {
-    pub block: &'a BitBlock,
-    pub block_idx: usize,
 }
 
 impl<'a> Iterator for PopulatedBlocksIter<'a> {
@@ -33,7 +37,7 @@ impl<'a> Iterator for PopulatedBlocksIter<'a> {
             ((block_cursor < block_count) && (bitset[block_cursor].bits() > 0)).then(|| {
                 PopulatedBlockItem {
                     block: &bitset[block_cursor],
-                    block_idx: block_count,
+                    block_idx: block_cursor,
                 }
             });
 

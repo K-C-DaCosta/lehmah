@@ -1,4 +1,10 @@
-#[derive(Copy,Clone,Debug)]
+pub mod iterators;
+#[cfg(test)]
+pub mod tests;
+
+use iterators::*;
+
+#[derive(Copy, Clone, Debug, PartialEq)]
 pub enum RingError {
     BufferFull,
     BufferEmpty,
@@ -12,10 +18,8 @@ pub struct RingBuffer<M> {
     front: usize,
     len: usize,
 }
-impl<M, T> RingBuffer<M>
-where
-    M: std::ops::Index<usize, Output = T> + std::ops::IndexMut<usize> + HasLen,
-{
+
+impl<M> RingBuffer<M> {
     pub fn with_backing(memory: M) -> Self {
         Self {
             memory,
@@ -33,6 +37,15 @@ where
         self.len() == 0
     }
 
+    pub fn release(self) -> M {
+        self.memory
+    }
+}
+
+impl<M, T> RingBuffer<M>
+where
+    M: std::ops::Index<usize, Output = T> + std::ops::IndexMut<usize> + HasLen,
+{
     pub fn is_full(&self) -> bool {
         self.len >= self.memory.len()
     }
@@ -50,7 +63,7 @@ where
 
     pub fn dequeue(&mut self) -> Result<&T> {
         let mem_len = self.memory.len();
-        if mem_len == 0 {
+        if self.len == 0 {
             return Err(RingError::BufferEmpty);
         }
 
@@ -60,13 +73,28 @@ where
         Ok(fetched_item)
     }
 
+    pub fn peek_front_mut(&mut self) -> &mut T {
+        let mem_len = self.memory.len();
+        &mut self.memory[self.front % mem_len]
+    }
+
     pub fn peek_front(&self) -> &T {
         let mem_len = self.memory.len();
         &self.memory[self.front % mem_len]
     }
 
-    pub fn release(self) -> M {
-        self.memory
+    pub fn peek_rear(&self) -> &T {
+        let mem_len = self.memory.len();
+        &self.memory[self.rear % mem_len]
+    }
+
+    pub fn peek_rear_mut(&mut self) -> &mut T {
+        let mem_len = self.memory.len();
+        &mut self.memory[self.rear % mem_len]
+    }
+
+    pub fn iter<'a>(&'a self) -> RingBufferIterator<'a, M> {
+        RingBufferIterator::with_ctx(self, self.front)
     }
 }
 

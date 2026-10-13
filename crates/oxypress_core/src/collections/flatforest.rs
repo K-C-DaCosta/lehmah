@@ -212,11 +212,13 @@ impl<Tag: Copy, T> FlatForest<Tag, T> {
             .populated_blocks()
             .flat_map(|elem| {
                 let block_idx = elem.block_idx;
-                (0..64)
+                (0..BitBlock::bit_capacity())
                     .map(move |bit_idx| (((elem.block.bits() >> bit_idx) & 1), block_idx, bit_idx))
             })
             .filter(|&(bit, _block_idx, _bit_idx)| bit >= 1)
-            .map(|(_bit, block_idx, bit_idx)| Ptr::from(block_idx * 64 + bit_idx))
+            .map(|(_bit, block_idx, bit_idx)| {
+                Ptr::from(block_idx * BitBlock::bit_capacity() + bit_idx)
+            })
     }
 }
 impl<Tag, T> Drop for FlatForest<Tag, T> {
@@ -229,8 +231,8 @@ impl<Tag, T> Drop for FlatForest<Tag, T> {
                 continue;
             }
 
-            let global_bit_idx_base = 64 * block_idx;
-            for bit_idx in 0..64 {
+            let global_bit_idx_base = BitBlock::bit_capacity() * block_idx;
+            for bit_idx in 0..BitBlock::bit_capacity() {
                 if block.check_bit(bit_idx) {
                     unsafe {
                         let global_bit_idx = global_bit_idx_base + bit_idx;

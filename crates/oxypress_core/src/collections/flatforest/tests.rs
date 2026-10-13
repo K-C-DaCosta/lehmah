@@ -9,7 +9,6 @@ fn can_alloc() {
     let root = tree.allocate_node(10);
     println!("root data = {:?}", tree.get_data(root));
     assert_eq!(tree.get_data(root), &10);
-
     tree.free(root);
 }
 
@@ -43,7 +42,7 @@ fn can_drop() {
 }
 #[test]
 fn can_drop_extended() {
-    let mut tree = FlatForest::<UnitTestTag,_>::new();
+    //let mut tree = FlatForest::<UnitTestTag,_>::new();
 
     
 }

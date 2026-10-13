@@ -1,11 +1,9 @@
-
-pub mod iterators;
 pub mod bitblock;
-
-
-pub use bitblock::*; 
+pub mod iterators;
+#[cfg(test)]
+pub mod tests;
+pub use bitblock::*;
 pub use iterators::*;
-
 
 pub struct BitSetIndex {
     block_idx: usize,
@@ -53,7 +51,6 @@ impl BitSet {
         self.blocks[block_idx].set_bit(bit_idx, bit_value as u64);
         self.bit_cursor += 1;
     }
-
     pub fn check_bit(&self, idx: usize) -> bool {
         self.get_bit(idx) > 0
     }
@@ -72,7 +69,12 @@ impl BitSet {
         self.blocks.iter().take(self.len_blocks())
     }
 
-    pub fn populated_blocks<'a>(&'a self)->impl Iterator<Item = PopulatedBlockItem<'a>> {
+    pub fn clear(&mut self) {
+        self.blocks.clear();
+        self.bit_cursor = 0;
+    }
+
+    pub fn populated_blocks<'a>(&'a self) -> impl Iterator<Item = PopulatedBlockItem<'a>> {
         PopulatedBlocksIter::from_bitset(self)
     }
 }
@@ -96,30 +98,8 @@ impl std::ops::Index<usize> for BitSet {
     }
 }
 impl std::ops::IndexMut<usize> for BitSet {
-    fn index_mut(&mut self, index:usize) -> &mut Self::Output {
+    fn index_mut(&mut self, index: usize) -> &mut Self::Output {
         &mut self.blocks[index]
     }
 }
 
-
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    #[test]
-    fn basic_test() {
-        //     1 1 0 1
-        //
-        let mut result = [ 0,0,1,1, 0,0,0,1,  1,1,0,1]
-            .iter()
-            .rev()
-            .copied()
-            .collect::<BitSet>();
-        assert_eq!(result.blocks[0].bits(), 0b0000_0011_0001_1101);
-        result.set_bit(0, 0);
-        assert_eq!(result.blocks[0].bits(), 0b0000_0011_0001_1100);
-        result.set_bit(8, 0);
-        assert_eq!(result.blocks[0].bits(), 0b0000_0010_0001_1100);
-        assert_eq!(result.len(), 11);
-    }
-}

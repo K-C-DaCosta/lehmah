@@ -23,7 +23,11 @@ pub enum ConsoleColors {
 macro_rules! loggy {
     ( $head:expr, $($rest:tt)+ ) => {
         {
-            let log_timestamp = chrono::Local::now().format("%d/%m/%Y_%H:%M:%S");
+            let log_timestamp = if cfg!(miri)  {
+                String::from("MIRI_TIME_STUB")
+            }else{
+                chrono::Local::now().format("%d/%m/%Y_%H:%M:%S").to_string()
+            };
             std::print!(
                 "[{}] \x1b[{}m",
                 log_timestamp,

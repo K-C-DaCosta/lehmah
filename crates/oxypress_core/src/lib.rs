@@ -4,12 +4,6 @@ use std::fmt::Debug;
 pub mod log;
 pub mod prelude;
 pub mod collections;
-
-#[test]
-fn chrono_test() {
-    print!("Chrono = {}", 123);
-}
-
 /// # Serializeable reference to DOM node
 /// - always relative to root of document (HTML node)
 #[derive(Serialize, Deserialize, Debug)]
@@ -27,11 +21,6 @@ impl Default for DomPointer {
     fn default() -> Self {
         Self::new()
     }
-}
-
-pub fn hello_world() -> u32 {
-    let x = 123123u32;
-    x
 }
 
 pub mod rich_text_core {
@@ -79,9 +68,5 @@ pub mod rich_text_core {
             Rc::new(Ast::Bold(vec![Ast::new_data("hello world")])),
             Rc::new(Ast::Newline),
         ]);
-
-
-
-    
     }
 }
