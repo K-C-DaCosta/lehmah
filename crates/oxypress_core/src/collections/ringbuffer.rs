@@ -92,6 +92,10 @@ where
         let mem_len = self.memory.len();
         &mut self.memory[self.rear % mem_len]
     }
+    pub fn clear(&mut self) {
+        self.rear = self.front;
+        self.len = 0;
+    }
 
     pub fn iter<'a>(&'a self) -> RingBufferIterator<'a, M> {
         RingBufferIterator::with_ctx(self, self.front)

@@ -69,6 +69,11 @@ impl BitSet {
         self.blocks.iter().take(self.len_blocks())
     }
 
+    pub fn blocks_iter_mut(&mut self) -> impl Iterator<Item = &mut BitBlock> {
+        let len = self.len_blocks();
+        self.blocks.iter_mut().take(len)
+    }
+
     pub fn clear(&mut self) {
         self.blocks.clear();
         self.bit_cursor = 0;
@@ -102,4 +107,3 @@ impl std::ops::IndexMut<usize> for BitSet {
         &mut self.blocks[index]
     }
 }
-

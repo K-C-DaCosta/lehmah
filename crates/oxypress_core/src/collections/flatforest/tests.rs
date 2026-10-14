@@ -52,8 +52,44 @@ fn can_drop() {
         .map(|val| tree.allocate_node((val + 9).to_string()))
         .collect::<Vec<_>>();
 
+    let mut dropped_nodes = vec![];
+    tree.drain(|dropped_ptr| {
+        dropped_nodes.push(dropped_ptr);
+    });
+
+    assert_eq!(dropped_nodes.len(), nodes.len());
+    assert_eq!(nodes, dropped_nodes);
+    assert_eq!(
+        tree.needs_drop.populated_blocks().count(),
+        0,
+        "All bits should be set to zero after the drain"
+    );
+    assert!(
+        tree.needs_drop
+            .blocks_iter()
+            .copied()
+            .all(|block| block.bits() == 0),
+        "needs_drop needs to be zero everywhere"
+    );
+    // IDEMPOTENCY CHECK ON `drain(..)`
+    for _ in 0..50 {
+        dropped_nodes.clear();
+        tree.drain(|ptr| dropped_nodes.push(ptr));
+        assert!(
+            tree.is_freed.blocks_iter().all(|block| block.inner == !0),
+            "All items should be flagged to be recycled"
+        );
+        assert_eq!(
+            tree.freed_cache.len(),
+            0,
+            "cache should be flushed after a drain"
+        );
+        assert_eq!(dropped_nodes.len(), 0, "Drain should be idempotent");
+    }
+
     std::mem::drop(tree);
 }
+
 #[test]
 fn can_cache() {
     let mut tree = FlatForest::<i32>::new();

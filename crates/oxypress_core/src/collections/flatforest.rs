@@ -39,7 +39,7 @@ pub struct FlatForest<Tag, T> {
     freed_cache: FreeCache<Tag>,
 }
 
-impl<Tag: Copy, T> FlatForest<Tag, T> {
+impl<Tag, T> FlatForest<Tag, T> {
     pub fn new() -> Self {
         Self {
             parent: vec![],
@@ -156,8 +156,8 @@ impl<Tag: Copy, T> FlatForest<Tag, T> {
     }
 
     /// # Safety
-    /// Frees a single node and drops content of the node. Not safe to call 
-    /// without knowing exactly what you're doing because if done wrong it can 
+    /// Frees a single node and drops content of the node. Not safe to call
+    /// without knowing exactly what you're doing because if done wrong it can
     /// break tree traversals
     pub unsafe fn shallow_free(&mut self, ptr: Ptr<Tag>) {
         self.is_freed.set_bit(ptr.to_index(), 0xff);
@@ -189,26 +189,44 @@ impl<Tag: Copy, T> FlatForest<Tag, T> {
         })
     }
 
-}
-impl<Tag, T> Drop for FlatForest<Tag, T> {
-    fn drop(&mut self) {
-        if !std::mem::needs_drop::<T>() {
-            return;
-        }
-        for (block_idx, mut block) in self.needs_drop.blocks_iter().copied().enumerate() {
-            if block.is_empty() {
-                continue;
-            }
-            let global_bit_idx_base = BitBlock::bit_capacity() * block_idx;
-            while block.bits() > 0 {
-                let bit_idx = block.get_lowest_bit_idx();
-                block.clear_lowest_bit();
-                unsafe {
-                    let global_bit_idx = global_bit_idx_base + bit_idx;
-                    std::ptr::drop_in_place(self.data[global_bit_idx].as_mut_ptr());
+    pub fn drain<F>(&mut self, mut before_drop: F)
+    where
+        F: FnMut(Ptr<Tag>),
+    {
+        if std::mem::needs_drop::<T>() {
+            for (block_idx, block) in self.needs_drop.blocks_iter_mut().enumerate() {
+                if block.is_empty() {
+                    continue;
+                }
+                let global_bit_idx_base = BitBlock::bit_capacity() * block_idx;
+                while block.bits() > 0 {
+                    let bit_idx = block.get_lowest_bit_idx();
+                    block.clear_lowest_bit();
+                    unsafe {
+                        let global_bit_idx = global_bit_idx_base + bit_idx;
+                        before_drop(Ptr::from(global_bit_idx));
+                        std::ptr::drop_in_place(self.data[global_bit_idx].as_mut_ptr());
+                    }
                 }
             }
         }
+
+        self.needs_drop.blocks_iter_mut().for_each(|block| {
+            block.inner = 0;
+        });
+        
+        // all nodes are recycleable now 
+        self.is_freed
+            .blocks_iter_mut()
+            .for_each(|block| block.inner = !0);
+        // makes sure cache isn't stale
+        self.freed_cache.clear();
+    }
+}
+
+impl<Tag, T> Drop for FlatForest<Tag, T> {
+    fn drop(&mut self) {
+        self.drain(|_| ());
     }
 }
 

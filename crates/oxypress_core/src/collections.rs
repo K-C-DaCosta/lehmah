@@ -4,7 +4,7 @@ pub mod bitset;
 pub mod flatforest;
 pub mod ringbuffer;
 
-#[derive(Copy, Clone, Debug)]
+#[derive(Debug)]
 pub struct Ptr<Tag> {
     data: usize,
     _tag: PhantomData<Tag>,
@@ -49,6 +49,12 @@ impl<Tag> Ord for Ptr<Tag> {
         self.data.cmp(&other.data)
     }
 }
+impl<Tag> Clone for Ptr<Tag> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+impl<Tag> Copy for Ptr<Tag> {}
 
 impl<Tag> From<usize> for Ptr<Tag> {
     fn from(value: usize) -> Self {
