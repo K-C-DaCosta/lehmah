@@ -73,22 +73,22 @@ where
         Ok(fetched_item)
     }
 
-    pub fn peek_front_mut(&mut self) -> &mut T {
+    pub fn front_mut(&mut self) -> &mut T {
         let mem_len = self.memory.len();
         &mut self.memory[self.front % mem_len]
     }
 
-    pub fn peek_front(&self) -> &T {
+    pub fn front(&self) -> &T {
         let mem_len = self.memory.len();
         &self.memory[self.front % mem_len]
     }
 
-    pub fn peek_rear(&self) -> &T {
+    pub fn rear(&self) -> &T {
         let mem_len = self.memory.len();
         &self.memory[self.rear % mem_len]
     }
 
-    pub fn peek_rear_mut(&mut self) -> &mut T {
+    pub fn rear_mut(&mut self) -> &mut T {
         let mem_len = self.memory.len();
         &mut self.memory[self.rear % mem_len]
     }

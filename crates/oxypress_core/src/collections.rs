@@ -35,6 +35,21 @@ impl<Tag> PartialEq for Ptr<Tag> {
         self.data == other.data
     }
 }
+
+impl<Tag> Eq for Ptr<Tag> {}
+
+impl<Tag> PartialOrd for Ptr<Tag> {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl<Tag> Ord for Ptr<Tag> {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.data.cmp(&other.data)
+    }
+}
+
 impl<Tag> From<usize> for Ptr<Tag> {
     fn from(value: usize) -> Self {
         Self {

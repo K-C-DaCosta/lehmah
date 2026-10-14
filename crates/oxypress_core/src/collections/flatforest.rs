@@ -10,12 +10,15 @@ use crate::collections::{
 
 use super::ringbuffer::RingBuffer;
 use super::{bitset::BitSet, *};
+
 pub mod children;
+pub mod freecache;
 pub mod iterators;
 #[cfg(test)]
 pub mod tests;
 
 pub use children::*;
+use freecache::*;
 pub use iterators::*;
 
 pub enum TakeError {
@@ -24,39 +27,6 @@ pub enum TakeError {
 
 #[derive(Copy, Clone, PartialEq)]
 pub struct BlockIdx(pub usize);
-
-pub struct FreeCache<Tag> {
-    buffer: RingBuffer<[BlockIdx; 16]>,
-    _tag: PhantomData<Tag>,
-}
-
-impl<Tag> FreeCache<Tag> {
-    pub fn new() -> Self {
-        Self {
-            buffer: RingBuffer::with_backing([BlockIdx(0); 16]),
-            _tag: PhantomData,
-        }
-    }
-}
-
-impl<Tag> Default for FreeCache<Tag> {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl<Tag> Deref for FreeCache<Tag> {
-    type Target = RingBuffer<[BlockIdx; 16]>;
-    fn deref(&self) -> &Self::Target {
-        &self.buffer
-    }
-}
-
-impl<Tag> DerefMut for FreeCache<Tag> {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.buffer
-    }
-}
 
 /// # Description
 /// You can use this to build trees, for easy mutations
@@ -126,24 +96,16 @@ impl<Tag: Copy, T> FlatForest<Tag, T> {
     fn poll_cache(&mut self) -> Option<Ptr<Tag>> {
         let is_freed = &mut self.is_freed;
         let cache = &mut self.freed_cache;
-        let mut result = Ptr::null();
-        while let Ok(BlockIdx(block_idx)) = cache.dequeue().copied() {
+        while !cache.is_empty() {
+            let &BlockIdx(block_idx) = cache.front();
             let block = &mut is_freed[block_idx];
             if block.bits() > 0 {
-                for bit_idx in 0..BitBlock::bit_capacity() {
-                    if (block.bits() >> bit_idx) & 1 > 0 {
-                        result = Ptr::from(block_idx * BitBlock::bit_capacity() + bit_idx);
-                        block.set_bit(bit_idx, 0);
-                        break;
-                    }
-                }
-                if block.bits() > 0 {
-                    cache.enqueue(BlockIdx(block_idx)).unwrap();
-                }
-                if result != Ptr::null() {
-                    return Some(result);
-                }
+                let bit_idx = block.get_lowest_bit_idx();
+                let freed_node = Ptr::from(block_idx * BitBlock::bit_capacity() + bit_idx);
+                block.clear_lowest_bit();
+                return Some(freed_node);
             }
+            cache.dequeue().expect("Failed to dequeue");
         }
         None
     }
@@ -151,19 +113,6 @@ impl<Tag: Copy, T> FlatForest<Tag, T> {
     pub fn allocate_node(&mut self, data: T) -> Ptr<Tag> {
         self.update_freed_cache();
         if let Some(reclaimed_pointer) = self.poll_cache() {
-            if std::mem::needs_drop::<T>()
-                && self.needs_drop.check_bit(reclaimed_pointer.to_index())
-            {
-                unsafe {
-                    std::ptr::drop_in_place(
-                        self.data
-                            .get_mut(reclaimed_pointer.to_index())
-                            .expect("Failed to derefence pointer")
-                            .as_mut_ptr(),
-                    );
-                }
-            }
-
             // initalize data with new value
             self.data
                 .get_mut(reclaimed_pointer.to_index())
@@ -197,47 +146,66 @@ impl<Tag: Copy, T> FlatForest<Tag, T> {
             return;
         }
         let len = self.get_children(root).len();
-        self.shallow_free(root);
+        unsafe {
+            self.shallow_free(root);
+        }
         for k in 0..len {
             let child = self.get_children(root)[k];
             self.free(child);
         }
     }
-    pub fn shallow_free(&mut self, ptr: Ptr<Tag>) {
+
+    /// # Safety
+    /// Frees a single node and drops content of the node. Not safe to call 
+    /// without knowing exactly what you're doing because if done wrong it can 
+    /// break tree traversals
+    pub unsafe fn shallow_free(&mut self, ptr: Ptr<Tag>) {
         self.is_freed.set_bit(ptr.to_index(), 0xff);
+        if std::mem::needs_drop::<T>() && self.needs_drop.check_bit(ptr.to_index()) {
+            unsafe {
+                self.data
+                    .get_mut(ptr.to_index())
+                    .expect("Failed to derefence")
+                    .assume_init_drop();
+            }
+            self.needs_drop.set_bit(ptr.to_index(), 0x00);
+        }
     }
 
     pub fn free_iter(&self) -> impl Iterator<Item = Ptr<Tag>> {
-        self.is_freed
-            .populated_blocks()
-            .flat_map(|elem| {
-                let block_idx = elem.block_idx;
-                (0..BitBlock::bit_capacity())
-                    .map(move |bit_idx| (((elem.block.bits() >> bit_idx) & 1), block_idx, bit_idx))
+        self.is_freed.populated_blocks().flat_map(|elem| {
+            let block_idx = elem.block_idx;
+            let mut block = elem.block.bits();
+            std::iter::from_fn(move || {
+                if block == 0 {
+                    return None;
+                }
+                let bit_idx = block.trailing_zeros();
+                block &= block - 1;
+                Some(Ptr::from(
+                    block_idx * BitBlock::bit_capacity() + bit_idx as usize,
+                ))
             })
-            .filter(|&(bit, _block_idx, _bit_idx)| bit >= 1)
-            .map(|(_bit, block_idx, bit_idx)| {
-                Ptr::from(block_idx * BitBlock::bit_capacity() + bit_idx)
-            })
+        })
     }
+
 }
 impl<Tag, T> Drop for FlatForest<Tag, T> {
     fn drop(&mut self) {
         if !std::mem::needs_drop::<T>() {
             return;
         }
-        for (block_idx, block) in self.needs_drop.blocks_iter().copied().enumerate() {
+        for (block_idx, mut block) in self.needs_drop.blocks_iter().copied().enumerate() {
             if block.is_empty() {
                 continue;
             }
-
             let global_bit_idx_base = BitBlock::bit_capacity() * block_idx;
-            for bit_idx in 0..BitBlock::bit_capacity() {
-                if block.check_bit(bit_idx) {
-                    unsafe {
-                        let global_bit_idx = global_bit_idx_base + bit_idx;
-                        std::ptr::drop_in_place(self.data[global_bit_idx].as_mut_ptr());
-                    }
+            while block.bits() > 0 {
+                let bit_idx = block.get_lowest_bit_idx();
+                block.clear_lowest_bit();
+                unsafe {
+                    let global_bit_idx = global_bit_idx_base + bit_idx;
+                    std::ptr::drop_in_place(self.data[global_bit_idx].as_mut_ptr());
                 }
             }
         }

@@ -40,6 +40,14 @@ impl BitBlock {
         self.inner |= bit_val << idx;
     }
 
+    pub fn get_lowest_bit_idx(&self) -> usize {
+        self.inner.trailing_zeros() as usize
+    }
+
+    pub fn clear_lowest_bit(&mut self) {
+        self.inner &= self.inner - 1;
+    }
+
     pub fn zero() -> Self {
         Self { inner: 0 }
     }
@@ -48,10 +56,8 @@ impl BitBlock {
     }
 }
 
-impl From<IntegerKind> for BitBlock{
+impl From<IntegerKind> for BitBlock {
     fn from(value: IntegerKind) -> Self {
-        Self{
-            inner:value
-        }
+        Self { inner: value }
     }
 }
