@@ -141,6 +141,11 @@ impl<Tag, T> FlatForest<Tag, T> {
         }
     }
 
+    pub fn add_child(&mut self, root: Ptr<Tag>, child: Ptr<Tag>) {
+        self.children[root.to_index()].push(child);
+        self.parent[child.to_index()] = root;
+    }
+
     pub fn free(&mut self, root: Ptr<Tag>) {
         if root == Ptr::null() {
             return;
@@ -214,13 +219,33 @@ impl<Tag, T> FlatForest<Tag, T> {
         self.needs_drop.blocks_iter_mut().for_each(|block| {
             block.inner = 0;
         });
-        
-        // all nodes are recycleable now 
+
+        // all nodes are recycleable now
         self.is_freed
             .blocks_iter_mut()
             .for_each(|block| block.inner = !0);
         // makes sure cache isn't stale
         self.freed_cache.clear();
+    }
+}
+
+impl<Tag, T: PartialEq> PartialEq for FlatForest<Tag, T> {
+    fn eq(&self, other: &Self) -> bool {
+        self.data.len() == other.data.len()
+            && self.parent.len() == other.parent.len()
+            && self.children.len() == other.children.len()
+            && self
+                .data
+                .iter()
+                .zip(other.data.iter())
+                .enumerate()
+                .all(|(idx, (left, right))| {
+                    self.is_freed.check_bit(idx) == other.is_freed.check_bit(idx)
+                        && self.needs_drop.check_bit(idx) == other.needs_drop.check_bit(idx)
+                        && self.needs_drop.check_bit(idx)
+                        && other.needs_drop.check_bit(idx)
+                        && unsafe { left.assume_init_ref().eq(right.assume_init_ref()) }
+                })
     }
 }
 
@@ -235,3 +260,5 @@ impl<Tag: Copy, T> Default for FlatForest<Tag, T> {
         Self::new()
     }
 }
+
+

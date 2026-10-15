@@ -40,3 +40,17 @@ rich-text-area text-container {
 }
 
 
+rich-text-area text-container {
+    display:block;
+    width: 100%;
+    height: 64px;
+}
+rich-text-area text-input:focus {
+    border: thick solid green;
+}
+
+
+rich-text-area rt-bold {
+    font-weight: bold;
+}
+

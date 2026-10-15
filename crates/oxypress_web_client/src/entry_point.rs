@@ -16,7 +16,7 @@ use web_sys::{
 };
 use yew::{prelude::*, Callback, ContextProvider, Properties};
 
-fn console_log(text: String) {
+pub fn console_log(text: String) {
     console::log_1(&JsValue::from_str(&text));
 }
 #[derive(Clone)]

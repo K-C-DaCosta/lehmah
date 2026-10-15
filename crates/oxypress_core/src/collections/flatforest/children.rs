@@ -3,6 +3,15 @@ use super::*;
 pub struct Children<Tag> {
     inner: Vec<Ptr<Tag>>,
 }
+
+impl<Tag> Clone for Children<Tag> {
+    fn clone(&self) -> Self {
+        Self {
+            inner: self.inner.clone(),
+        }
+    }
+}
+
 impl<Tag> Children<Tag> {
     pub fn new() -> Self {
         Self { inner: vec![] }

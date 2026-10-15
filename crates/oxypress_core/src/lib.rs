@@ -1,9 +1,9 @@
 use serde::{Deserialize, Serialize};
 use std::fmt::Debug;
 
+pub mod collections;
 pub mod log;
 pub mod prelude;
-pub mod collections;
 /// # Serializeable reference to DOM node
 /// - always relative to root of document (HTML node)
 #[derive(Serialize, Deserialize, Debug)]
@@ -24,7 +24,27 @@ impl Default for DomPointer {
 }
 
 pub mod rich_text_core {
+    use crate::collections::flatforest::FlatForest;
     use std::{cell::RefCell, ops::Deref, rc::Rc};
+
+    pub struct RichTag;
+
+    #[derive(Copy, Clone, PartialEq)]
+    pub enum RichKind {
+        Origin,
+        Bold,
+        Newline,
+        Text,
+    }
+
+    #[derive(Clone, PartialEq)]
+    pub struct RichNode {
+        pub kind: RichKind,
+        pub aux_data: String,
+    }
+
+    pub type RichForest = FlatForest<RichTag, RichNode>;
+
     pub enum Ast {
         Origin(Vec<Rc<Ast>>),
         Bold(Vec<Rc<Ast>>),
