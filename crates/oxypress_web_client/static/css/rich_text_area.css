@@ -54,3 +54,7 @@ rich-text-area rt-bold {
     font-weight: bold;
 }
 
+rich-text-area rt-text {
+    white-space: pre-wrap;
+}
+

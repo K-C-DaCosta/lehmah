@@ -5,7 +5,7 @@ use oxypress_core::{
 use std::{cell::RefCell, char, ops::Deref, rc::Rc};
 use web_sys::{
     wasm_bindgen::{JsCast, JsValue},
-    HtmlElement,
+    HtmlElement, HtmlInputElement,
 };
 use yew::{html::Html, prelude::*};
 
@@ -23,6 +23,7 @@ pub struct TextAreaState {
     tools: Vec<ToolState>,
     forest: Rc<RefCell<RichForest>>,
     root: Ptr<RichTag>,
+    focused_node: Ptr<RichTag>,
     update_counter: usize,
 }
 
@@ -74,11 +75,23 @@ impl TextAreaState {
             ],
             forest: Rc::new(RefCell::new(forest)),
             root,
+            focused_node: Ptr::null(),
             update_counter: 0,
         }
     }
+
     pub fn set_tool(mut self, tool_idx: Option<usize>) -> Self {
         self.selected_tool = tool_idx;
+        self
+    }
+
+    pub fn trigger_update(mut self) -> Self {
+        self.update_counter += 1;
+        self
+    }
+
+    pub fn set_focused_node(mut self, node: Ptr<RichTag>) -> Self {
+        self.focused_node = node;
         self
     }
 }
@@ -139,6 +152,8 @@ fn TextAreaTool(p: &TextAreaToolProps) -> Html {
 #[function_component]
 pub fn RichTextArea() -> Html {
     let state = use_state(TextAreaState::new);
+    let input_ref = NodeRef::default();
+
     let tool_iter = state.tools.clone().into_iter().enumerate().map({
         let state = state.clone();
         move |(idx, tool_ctx)| {
@@ -149,19 +164,35 @@ pub fn RichTextArea() -> Html {
     });
 
     let onkeydown = Callback::from({
+        let state = state.clone();
         move |e: web_sys::KeyboardEvent| {
             e.prevent_default();
-            let current_target = e
-                .target()
-                .unwrap()
-                .dyn_ref::<HtmlElement>()
-                .cloned()
-                .unwrap();
+            console_log(format!("Counter = {:?}", state.update_counter));
+            state.set(state.deref().clone().trigger_update());
+        }
+    });
 
-            if let Some(text) = char::from_u32(e.key_code()) {
-                current_target
-                    .append_with_str_1(text.to_string().as_str())
-                    .unwrap();
+    let oninput = Callback::from({
+        let state = state.clone();
+        let input_ref = input_ref.clone();
+        move |_e: InputEvent| {
+            if let Some(input) = input_ref.cast::<HtmlInputElement>() {
+                let cursor_pos = input.selection_start().ok().flatten().unwrap_or(0);
+                let value = input.value();
+
+                let focused_node = state.focused_node;
+                if focused_node == Ptr::null() {
+                    return;
+                }
+
+                let mut forest = state.forest.borrow_mut();
+                forest.get_data_mut(focused_node).aux_data.clear();
+                forest
+                    .get_data_mut(focused_node)
+                    .aux_data
+                    .push_str(value.as_str());
+
+                state.set(state.deref().clone().trigger_update());
             }
         }
     });
@@ -169,12 +200,18 @@ pub fn RichTextArea() -> Html {
     html! {
         <>
             <rich-text-area>
+                <input ref={input_ref.clone()} type="text" {oninput}   />
                 <tool-container>
                     {for tool_iter}
                 </tool-container>
-                <text-container tabindex="0" {onkeydown}>
+                <text-container>
                     // START RECURSING AT THE ROOT OF THE AST
-                    <RichDisplayNode root={state.root} forest={state.forest.clone()} />
+                    <RichDisplayNode
+                        ta_state={state.clone()}
+                        root={state.root}
+                        forest={state.forest.clone()}
+                        input_ref={input_ref.clone()}
+                    />
                 </text-container>
             </rich-text-area>
         </>
@@ -183,20 +220,29 @@ pub fn RichTextArea() -> Html {
 
 #[derive(Properties, PartialEq)]
 struct RichDisplayNodeProps {
+    pub ta_state: UseStateHandle<TextAreaState>,
     pub root: Ptr<RichTag>,
     pub forest: Rc<RefCell<RichForest>>,
+    pub input_ref: NodeRef,
 }
 
 #[function_component]
 fn RichDisplayNode(p: &RichDisplayNodeProps) -> Html {
     let root = p.root;
     let forest = p.forest.clone();
+    let ta_state = p.ta_state.clone();
+    let input_ref = p.input_ref.clone();
 
     let root_node = forest.borrow().get_data(root).clone();
     let child_list = forest.borrow().get_children(root).clone();
     let child_iterator = child_list.iter().copied().map(|child_ptr| {
         html! {
-            <RichDisplayNode root={child_ptr} forest={forest.clone()}/>
+            <RichDisplayNode
+                ta_state={ta_state.clone()}
+                root={child_ptr}
+                forest={forest.clone()}
+                input_ref={input_ref.clone()}
+            />
         }
     });
 
@@ -218,9 +264,39 @@ fn RichDisplayNode(p: &RichDisplayNodeProps) -> Html {
             }
         }
         RichKind::Text => {
+            let onkeydown = Callback::from({
+                move |e: web_sys::KeyboardEvent| {
+                    let forest = forest.clone();
+                    let root = root;
+                    forest
+                        .borrow_mut()
+                        .get_data_mut(root)
+                        .aux_data
+                        .push_str(e.key().as_str());
+
+                    console_log(format!(
+                        "text is now: {}",
+                        forest.borrow().get_data(root).aux_data
+                    ));
+                }
+            });
+            // 1. Callback to focus the hidden input when a custom text node is clicked
+            let on_text_click = {
+                let input_ref = input_ref.clone();
+                let ta_state = ta_state.clone();
+                Callback::from(move |_e: MouseEvent| {
+                    if let Some(input) = input_ref.cast::<HtmlInputElement>() {
+                        ta_state.set(ta_state.deref().clone().set_focused_node(root));
+                        let _ = input.focus();
+                    }
+                })
+            };
+
             html! {
                 <>
-                    {root_node.aux_data}
+                    <rt-text onclick={on_text_click}>
+                        {root_node.aux_data}
+                    </rt-text>
                 </>
             }
         }
