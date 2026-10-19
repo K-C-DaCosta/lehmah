@@ -58,3 +58,16 @@ rich-text-area rt-text {
     white-space: pre-wrap;
 }
 
+rich-text-area rt-caret {
+    border:thin solid pink;
+    border-width: 0px thin 0px 0px;
+}
+
+/*
+rich-text-area > input {
+    all:unset;
+    position: absolute;
+    width: 1px;
+    height: 1px;
+}
+*/

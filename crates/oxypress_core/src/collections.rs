@@ -1,4 +1,4 @@
-use std::marker::PhantomData;
+use std::{hash::Hash, marker::PhantomData};
 
 pub mod bitset;
 pub mod flatforest;
@@ -62,5 +62,12 @@ impl<Tag> From<usize> for Ptr<Tag> {
             data: value,
             _tag: PhantomData,
         }
+    }
+}
+
+impl<Tag> Hash for Ptr<Tag> {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        state.write_usize(self.data);
+
     }
 }

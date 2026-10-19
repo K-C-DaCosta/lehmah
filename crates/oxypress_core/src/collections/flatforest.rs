@@ -159,6 +159,29 @@ impl<Tag, T> FlatForest<Tag, T> {
             self.free(child);
         }
     }
+    pub fn traverse_all<F>(&mut self, root: Ptr<Tag>, mut on_root: F)
+    where
+        F: FnMut(&mut Self, Ptr<Tag>) -> bool,
+    {
+        self.traverse_all_helper(root, &mut on_root);
+    }
+
+    fn traverse_all_helper<F>(&mut self, root: Ptr<Tag>, on_root: &mut F)
+    where
+        F: FnMut(&mut Self, Ptr<Tag>) -> bool,
+    {
+        if root == Ptr::null() {
+            return;
+        }
+        let len = self.get_children(root).len();
+
+        (on_root)(self, root);
+
+        for k in 0..len {
+            let child = self.get_children(root)[k];
+            self.traverse_all_helper(child, on_root);
+        }
+    }
 
     /// # Safety
     /// Frees a single node and drops content of the node. Not safe to call
@@ -260,5 +283,3 @@ impl<Tag: Copy, T> Default for FlatForest<Tag, T> {
         Self::new()
     }
 }
-
-

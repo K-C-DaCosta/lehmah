@@ -1,11 +1,22 @@
+use core::panic;
 use oxypress_core::{
     collections::{flatforest::FlatForest, Ptr},
-    rich_text_core::{RichForest, RichKind, RichNode, RichTag},
+    rich_text::{
+        RichContentTable, RichData, RichForest, RichKind, RichNode, RichOffset, RichRange,
+        RichSelection, RichTag, TextSelectionKind, TextState,
+    },
 };
-use std::{cell::RefCell, char, ops::Deref, rc::Rc};
+use std::{
+    cell::RefCell,
+    char,
+    collections::HashMap,
+    ops::{Deref, DerefMut},
+    rc::Rc,
+};
 use web_sys::{
-    wasm_bindgen::{JsCast, JsValue},
-    HtmlElement, HtmlInputElement,
+    js_sys::Array,
+    wasm_bindgen::{self, prelude::Closure, JsCast, JsValue},
+    window, HtmlElement, HtmlInputElement,
 };
 use yew::{html::Html, prelude::*};
 
@@ -22,35 +33,44 @@ pub struct TextAreaState {
     selected_tool: Option<usize>,
     tools: Vec<ToolState>,
     forest: Rc<RefCell<RichForest>>,
-    root: Ptr<RichTag>,
+    forest_content: Rc<RefCell<RichContentTable>>,
+    document: Ptr<RichTag>,
     focused_node: Ptr<RichTag>,
+    ast_selection: RichSelection,
     update_counter: usize,
 }
 
 impl TextAreaState {
     pub fn new() -> Self {
         let mut forest = RichForest::new();
-        let root = forest.allocate_node(RichNode {
-            kind: RichKind::Origin,
-            aux_data: String::new(),
+        let mut forest_content = HashMap::new();
+        let document = forest.allocate_node(RichNode {
+            kind: RichKind::Document,
         });
 
         let bold = forest.allocate_node(RichNode {
             kind: RichKind::Bold,
-            aux_data: String::new(),
         });
 
         let text = forest.allocate_node(RichNode {
             kind: RichKind::Text,
-            aux_data: String::from("Hello world"),
         });
 
         forest.add_child(bold, text);
-        forest.add_child(root, bold);
-        /*
-         *  .
+        forest.add_child(document, bold);
+        forest_content
+            .entry(text)
+            .or_insert(RichData::Text(TextState {
+                text: String::from("Hello World"),
+                selection: TextSelectionKind::Caret(RichOffset::from_utf8_offset("Hello World", 5)),
+            }));
+
+        /* Hardcoded AST:
+         * --------------
+         *  Document
          *  ..Bold
-         *  ....Text('HELLO WORLD')
+         *  ....Text
+         *  ......'HELLO WORLD'
          * */
 
         Self {
@@ -74,8 +94,10 @@ impl TextAreaState {
                 },
             ],
             forest: Rc::new(RefCell::new(forest)),
-            root,
+            forest_content: Rc::new(RefCell::new(forest_content)),
+            document,
             focused_node: Ptr::null(),
+            ast_selection: RichSelection::new(),
             update_counter: 0,
         }
     }
@@ -163,34 +185,35 @@ pub fn RichTextArea() -> Html {
         }
     });
 
-    let onkeydown = Callback::from({
-        let state = state.clone();
-        move |e: web_sys::KeyboardEvent| {
-            e.prevent_default();
-            console_log(format!("Counter = {:?}", state.update_counter));
-            state.set(state.deref().clone().trigger_update());
-        }
-    });
-
     let oninput = Callback::from({
         let state = state.clone();
         let input_ref = input_ref.clone();
         move |_e: InputEvent| {
             if let Some(input) = input_ref.cast::<HtmlInputElement>() {
-                let cursor_pos = input.selection_start().ok().flatten().unwrap_or(0);
+                let input_selection_start = input.selection_start().ok().flatten().unwrap_or(0);
+                let input_selection_end = input.selection_end().ok().flatten().unwrap_or(0);
+
                 let value = input.value();
 
                 let focused_node = state.focused_node;
                 if focused_node == Ptr::null() {
                     return;
                 }
+                let focused_node_kind = state.forest.borrow().get_data(focused_node).clone().kind;
+                let mut forest_content = state.forest_content.borrow_mut();
 
-                let mut forest = state.forest.borrow_mut();
-                forest.get_data_mut(focused_node).aux_data.clear();
-                forest
-                    .get_data_mut(focused_node)
-                    .aux_data
-                    .push_str(value.as_str());
+                match focused_node_kind {
+                    RichKind::Text => {
+                        if let Some(RichData::Text(TextState { text, .. })) =
+                            forest_content.get_mut(&focused_node)
+                        {
+                            text.clear();
+                            text.push_str(value.as_str());
+                        }
+                    }
+                    RichKind::Newline => {}
+                    _ => {}
+                }
 
                 state.set(state.deref().clone().trigger_update());
             }
@@ -208,7 +231,7 @@ pub fn RichTextArea() -> Html {
                     // START RECURSING AT THE ROOT OF THE AST
                     <RichDisplayNode
                         ta_state={state.clone()}
-                        root={state.root}
+                        root={state.document}
                         forest={state.forest.clone()}
                         input_ref={input_ref.clone()}
                     />
@@ -247,57 +270,119 @@ fn RichDisplayNode(p: &RichDisplayNodeProps) -> Html {
     });
 
     match root_node.kind {
-        RichKind::Origin => {
+        RichKind::Document => {
             html! {
                 <>
-                    {for child_iterator}
+                    <rt-document data-ast-id={root.to_index().to_string()}>
+                        {for child_iterator}
+                    </rt-document>
                 </>
             }
         }
         RichKind::Bold => {
             html! {
                 <>
-                    <rt-bold>
+                    <rt-bold data-ast-id={root.to_index().to_string()} >
                         {for child_iterator}
                     </rt-bold>
                 </>
             }
         }
         RichKind::Text => {
-            let onkeydown = Callback::from({
-                move |e: web_sys::KeyboardEvent| {
-                    let forest = forest.clone();
-                    let root = root;
-                    forest
-                        .borrow_mut()
-                        .get_data_mut(root)
-                        .aux_data
-                        .push_str(e.key().as_str());
-
-                    console_log(format!(
-                        "text is now: {}",
-                        forest.borrow().get_data(root).aux_data
-                    ));
-                }
-            });
             // 1. Callback to focus the hidden input when a custom text node is clicked
-            let on_text_click = {
+            let hand_over_control_to_hidden_input = {
                 let input_ref = input_ref.clone();
                 let ta_state = ta_state.clone();
                 Callback::from(move |_e: MouseEvent| {
                     if let Some(input) = input_ref.cast::<HtmlInputElement>() {
+                        let selection = compute_text_selection();
                         ta_state.set(ta_state.deref().clone().set_focused_node(root));
                         let _ = input.focus();
                     }
                 })
             };
 
-            html! {
-                <>
-                    <rt-text onclick={on_text_click}>
-                        {root_node.aux_data}
-                    </rt-text>
-                </>
+            let clear_all_overlays = {
+                let ta_state = ta_state.clone();
+                Callback::from(move |_e: MouseEvent| {
+                    let document = ta_state.document;
+                    let forest = &mut *ta_state.forest.borrow_mut();
+                    let forest_content = &mut *ta_state.forest_content.borrow_mut();
+
+                    forest.traverse_all(document, |forest, node| {
+                        if let RichKind::Text = forest.get_data(node).kind {
+                            let text_node_state = forest_content
+                                .get_mut(&node)
+                                .and_then(RichData::as_text_mut)
+                                .expect("Failed to fetch text-node content");
+                            //text_node_state.selection = TextSelectionKind::Unselected;
+                        }
+                        false
+                    });
+                    let window = window().unwrap();
+                    let closure = Closure::<dyn FnMut()>::new(|| {
+                        console_log("Hello world".to_string());
+                    });
+                    window
+                        .set_timeout_with_callback_and_timeout_and_arguments(
+                            closure.as_ref().unchecked_ref(),
+                            2000,
+                            &Array::new(),
+                        )
+                        .unwrap();
+                    closure.forget();
+
+                    //ta_state.set(ta_state.deref().clone().trigger_update());
+                    console_log("Cleared all overlays in the document".to_string());
+                })
+            };
+
+            let text_state = ta_state
+                .forest_content
+                .borrow()
+                .get(&root)
+                .and_then(RichData::as_text)
+                .cloned()
+                .unwrap();
+
+            match text_state.selection {
+                TextSelectionKind::Unselected => {
+                    html! {
+                        <>
+                            <rt-text
+                                data-ast-id={root.to_index().to_string()}
+                                onmouseup={hand_over_control_to_hidden_input}
+                                onmousedown={clear_all_overlays}
+                            >
+                                {text_state.text}
+                            </rt-text>
+                        </>
+                    }
+                }
+                TextSelectionKind::Caret(split_offset) => {
+                    let lower = &text_state.text[0..split_offset.utf8];
+                    let upper = &text_state.text[split_offset.utf8..];
+
+                    html! {
+                        <>
+                            <rt-text
+                                data-ast-id={root.to_index().to_string()}
+                                onmouseup={hand_over_control_to_hidden_input}
+                                onmousedown={clear_all_overlays}
+                            >
+
+                                <rt-caret>{lower}</rt-caret>{upper}
+                                </rt-text>
+                        </>
+                    }
+                }
+                TextSelectionKind::Range(range) => {
+                    html! {
+                        <>
+                        {"Unimplemented"}
+                        </>
+                    }
+                }
             }
         }
         RichKind::Newline => {
@@ -308,4 +393,80 @@ fn RichDisplayNode(p: &RichDisplayNodeProps) -> Html {
             }
         }
     }
+}
+
+fn compute_text_selection() -> Result<RichSelection, wasm_bindgen::JsValue> {
+    let selection = web_sys::window()
+        .unwrap()
+        .document()
+        .ok_or(JsValue::from_str("No document"))?
+        .get_selection()?
+        .ok_or(JsValue::from_str("No selection"))?;
+
+    let range = selection.get_range_at(0)?;
+    let start_dom = range.start_container()?;
+    let end_dom = range.end_container()?;
+
+    let start_dom_name = start_dom.node_name();
+    let end_dom_name = end_dom.node_name();
+    console_log(format!("START_CONTAINER_NAME = {}", start_dom_name));
+    console_log(format!("END_CONTAINER_NAME = {}", end_dom_name));
+    //if start_dom_name != "#text" || end_dom_name != "#text" {
+    return Err(JsValue::from_str("SELECT-ALL NOT IMPLEMENTED"));
+    //}
+
+    let start_dom_text = start_dom
+        .text_content()
+        .ok_or(JsValue::from_str("No start text content"))?;
+    let end_dom_text = end_dom.text_content().ok_or("No end text content")?;
+
+    let start_offset =
+        RichOffset::from_utf16_offset(&start_dom_text, range.start_offset().unwrap() as usize);
+    let end_offset =
+        RichOffset::from_utf16_offset(&end_dom_text, range.end_offset().unwrap() as usize);
+
+    let start_rich_ast = map_dom_node_to_rich_ast(start_dom);
+    let end_rich_ast = map_dom_node_to_rich_ast(end_dom);
+
+    Ok(RichSelection {
+        start_node: start_rich_ast,
+        end_node: end_rich_ast,
+        start_offset,
+        end_offset,
+    })
+}
+
+pub fn map_dom_node_to_rich_ast(node: web_sys::Node) -> Ptr<RichTag> {
+    let mut root = node.clone();
+    while let Some(parent) = root.parent_node() {
+        if root.node_type() == web_sys::Node::TEXT_NODE {
+            root = parent;
+            continue;
+        }
+
+        let root_elem = root
+            .dyn_into::<web_sys::Element>()
+            .expect("Failed to cast to Element");
+
+        if let Some(ast_id) = root_elem.get_attribute("data-ast-id") {
+            return Ptr::from(ast_id.parse::<usize>().expect("Failed to parse ast id"));
+        } else {
+            // The reason the attribute might not be read sometimes is because
+            // The user can double-click and the browser will automatically
+            // put the start and end nodes on a DOM node that contains ALL text.
+            // I handle that case somewhere higher up,
+            // first node is always expected to be a TEXT_NODE
+            // I'm leaving these logs in for debugging purposes just incase I miss
+            // other cases soemwhere else
+            console_log("WTF! Failed to read ast ID".to_string());
+            console_log(root_elem.outer_html());
+            console_log(format!("origin node type = {}", node.node_name()));
+            console_log(format!(
+                "origin value = {}",
+                node.node_value().unwrap_or(String::from("ERROR"))
+            ));
+            panic!("Unexpected browser selection behavior examine trace.");
+        }
+    }
+    Ptr::null()
 }
