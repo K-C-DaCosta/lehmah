@@ -19,6 +19,16 @@ pub struct RichSelection {
     pub end_offset: RichOffset,
 }
 
+pub enum RichCharacterRangeKind {
+    MonoCharacter,
+    MultiCharacter,
+}
+
+pub enum RichSelectionKind {
+    MonoNode(RichCharacterRangeKind),
+    MultiNode,
+}
+
 impl RichSelection {
     pub fn new() -> Self {
         Self {
@@ -29,8 +39,17 @@ impl RichSelection {
         }
     }
 
-    pub fn has_multiple_nodes(&self)->bool{
-        self.start_node != self.end_node
+    pub fn kind(&self) -> RichSelectionKind {
+        if self.start_node == self.end_node {
+            let character_range = if self.start_offset == self.end_offset {
+                RichCharacterRangeKind::MonoCharacter
+            } else {
+                RichCharacterRangeKind::MultiCharacter
+            };
+            RichSelectionKind::MonoNode(character_range)
+        } else {
+            RichSelectionKind::MultiNode
+        }
     }
 }
 
@@ -46,7 +65,7 @@ pub struct RichRange {
     pub end: RichOffset,
 }
 
-#[derive(Copy,Clone, Default, PartialEq)]
+#[derive(Copy, Clone, Default, PartialEq)]
 pub struct RichOffset {
     pub utf8: usize,
     pub utf16: usize,
@@ -82,13 +101,13 @@ impl RichOffset {
         *self = Self::from_utf8_offset(source_text, utf8_offset);
     }
 
-    pub fn update_from_utf16(&mut self, source_text:&str, utf16_offset:usize){
-        *self= Self::from_utf16_offset(source_text, utf16_offset);
+    pub fn update_from_utf16(&mut self, source_text: &str, utf16_offset: usize) {
+        *self = Self::from_utf16_offset(source_text, utf16_offset);
     }
 }
 
-#[derive(Copy,Clone,PartialEq)]
-pub enum TextSelectionKind { 
+#[derive(Copy, Clone, PartialEq)]
+pub enum TextSelectionKind {
     Caret(RichOffset),
     Range(RichRange),
     Unselected,
@@ -97,10 +116,8 @@ pub enum TextSelectionKind {
 #[derive(Clone, PartialEq)]
 pub struct TextState {
     pub text: String,
-    pub selection:TextSelectionKind,
+    pub selection: TextSelectionKind,
 }
-
-
 
 #[derive(Clone, PartialEq)]
 pub enum RichData {
