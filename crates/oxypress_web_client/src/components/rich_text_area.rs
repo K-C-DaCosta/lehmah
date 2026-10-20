@@ -23,6 +23,9 @@ use yew::{html::Html, prelude::*};
 
 use crate::entry_point::console_log;
 
+
+const ZERO_WIDTH_SPACE:&str = "\u{200B}";
+
 #[derive(PartialEq, Clone)]
 pub struct ToolState {
     name: AttrValue,
@@ -241,18 +244,41 @@ pub fn RichTextArea() -> Html {
                 &input_text,
                 input.selection_end().ok().flatten().unwrap_or_default() as usize,
             );
-            if selection_start == selection_end {
-                if let Some(text_state) = state
-                    .forest_content
-                    .borrow_mut()
-                    .get_mut(&focused_node)
-                    .and_then(RichData::as_text_mut)
-                {
+            if let Some(text_state) = state
+                .forest_content
+                .borrow_mut()
+                .get_mut(&focused_node)
+                .and_then(RichData::as_text_mut)
+            {
+                if selection_start == selection_end {
                     text_state.selection = TextSelectionKind::Caret(selection_start);
+                } else {
+                    text_state.selection = TextSelectionKind::Range(RichRange {
+                        start: selection_start,
+                        end: selection_end,
+                    })
                 }
-            } else {
-
             }
+            state.set(state.deref().clone().trigger_update());
+        }
+    });
+    let onkeydown = Callback::from({
+        let state = state.clone();
+        move |e: KeyboardEvent| {
+            let focused_node = state.focused_node;
+            if focused_node == Ptr::null() {
+                return;
+            }
+            console_log(format!("Input keycode: {}, node focused",e.key()));
+            if e.key() == "Enter" {
+                let forest = &mut *state.forest.borrow_mut();
+                let focused_parent = *forest.get_parent(focused_node);
+                let newline_element = forest.allocate_node(RichNode {
+                    kind: RichKind::Newline,
+                });
+                forest.add_child(focused_parent, newline_element);
+            }
+
             state.set(state.deref().clone().trigger_update());
         }
     });
@@ -265,6 +291,7 @@ pub fn RichTextArea() -> Html {
                     type="text"
                     {oninput}
                     {onselectionchange}
+                    {onkeydown}
                 />
 
                 <tool-container>
@@ -482,7 +509,7 @@ fn RichDisplayNode(p: &RichDisplayNodeProps) -> Html {
         RichKind::Newline => {
             html! {
                 <>
-                    <br/>
+                    <br/>{ZERO_WIDTH_SPACE}
                 </>
             }
         }

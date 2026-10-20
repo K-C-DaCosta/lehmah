@@ -63,7 +63,9 @@ rich-text-area text-overlays {
 
 
 
-
+rich-text-area rt-document {
+    display: block;
+}
 rich-text-area text-input:focus {
     border: thick solid green;
 }
@@ -74,6 +76,7 @@ rich-text-area rt-bold {
 }
 
 rich-text-area rt-text {
+    display: inline;
     white-space: pre-wrap;
 }
 

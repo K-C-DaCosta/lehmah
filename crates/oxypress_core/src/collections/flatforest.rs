@@ -55,9 +55,18 @@ impl<Tag, T> FlatForest<Tag, T> {
         &self.children[ptr.to_index()]
     }
 
-    pub fn get_parent_mut(&mut self, ptr: Ptr<Tag>) -> &mut Children<Tag> {
+    pub fn get_children_mut(&mut self, ptr: Ptr<Tag>) -> &mut Children<Tag> {
         &mut self.children[ptr.to_index()]
     }
+
+    pub fn get_parent(&self,ptr:Ptr<Tag>)->&Ptr<Tag>{
+        &self.parent[ptr.to_index()]
+    }
+
+    pub fn get_parent_mut(&mut self,ptr:Ptr<Tag>)->&mut Ptr<Tag>{
+        &mut self.parent[ptr.to_index()]
+    }
+
 
     pub fn get_data(&self, ptr: Ptr<Tag>) -> &T {
         unsafe {
@@ -174,7 +183,6 @@ impl<Tag, T> FlatForest<Tag, T> {
             return;
         }
         let len = self.get_children(root).len();
-
         (on_root)(self, root);
 
         for k in 0..len {
