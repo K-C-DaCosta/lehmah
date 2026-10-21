@@ -59,14 +59,13 @@ impl<Tag, T> FlatForest<Tag, T> {
         &mut self.children[ptr.to_index()]
     }
 
-    pub fn get_parent(&self,ptr:Ptr<Tag>)->&Ptr<Tag>{
+    pub fn get_parent(&self, ptr: Ptr<Tag>) -> &Ptr<Tag> {
         &self.parent[ptr.to_index()]
     }
 
-    pub fn get_parent_mut(&mut self,ptr:Ptr<Tag>)->&mut Ptr<Tag>{
+    pub fn get_parent_mut(&mut self, ptr: Ptr<Tag>) -> &mut Ptr<Tag> {
         &mut self.parent[ptr.to_index()]
     }
-
 
     pub fn get_data(&self, ptr: Ptr<Tag>) -> &T {
         unsafe {
@@ -152,6 +151,20 @@ impl<Tag, T> FlatForest<Tag, T> {
 
     pub fn add_child(&mut self, root: Ptr<Tag>, child: Ptr<Tag>) {
         self.children[root.to_index()].push(child);
+        self.parent[child.to_index()] = root;
+    }
+    pub fn add_child_at(&mut self, root: Ptr<Tag>, child: Ptr<Tag>, target: Ptr<Tag>,offset:isize) {
+        let children = &mut self.children[root.to_index()];
+
+        let target_position = children
+            .iter()
+            .enumerate()
+            .find(|&(_idx, &node)| node == target)
+            .map(|(idx, _node)| idx)
+            .expect("Failed to find target") as isize;
+
+
+        children.insert((target_position+offset) as usize, child);
         self.parent[child.to_index()] = root;
     }
 

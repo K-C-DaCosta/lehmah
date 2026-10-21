@@ -23,8 +23,7 @@ use yew::{html::Html, prelude::*};
 
 use crate::entry_point::console_log;
 
-
-const ZERO_WIDTH_SPACE:&str = "\u{200B}";
+const ZERO_WIDTH_SPACE: &str = "\u{200B}";
 
 #[derive(PartialEq, Clone)]
 pub struct ToolState {
@@ -62,6 +61,7 @@ impl TextAreaState {
 
         forest.add_child(bold, text);
         forest.add_child(document, bold);
+
         forest_content
             .entry(text)
             .or_insert(RichData::Text(TextState {
@@ -119,6 +119,24 @@ impl TextAreaState {
     pub fn set_focused_node(mut self, node: Ptr<RichTag>) -> Self {
         self.focused_node = node;
         self
+    }
+
+    pub fn flush_overlays(&self) {
+        let document = self.document;
+        {
+            let forest = &mut *self.forest.borrow_mut();
+            let forest_content = &mut *self.forest_content.borrow_mut();
+            forest.traverse_all(document, |forest, node| {
+                if let RichKind::Text = forest.get_data(node).kind {
+                    let text_node_state = forest_content
+                        .get_mut(&node)
+                        .and_then(RichData::as_text_mut)
+                        .expect("Failed to fetch text-node content");
+                    text_node_state.selection = TextSelectionKind::Unselected;
+                }
+                false
+            });
+        }
     }
 }
 impl Default for TextAreaState {
@@ -227,8 +245,10 @@ pub fn RichTextArea() -> Html {
         }
     });
     let onselectionchange = Callback::from({
-        let state = state.clone();
+        let state_handler = state.clone();
         move |e: Event| {
+            let mut state = state_handler.deref().clone();
+
             let focused_node = state.focused_node;
             let input = e
                 .target_dyn_into::<HtmlInputElement>()
@@ -238,11 +258,11 @@ pub fn RichTextArea() -> Html {
             let input_text = input.value();
             let selection_start = RichOffset::from_utf16_offset(
                 &input_text,
-                input.selection_start().ok().flatten().unwrap_or_default() as usize,
+                input.selection_start().ok().flatten().unwrap_or(0) as usize,
             );
             let selection_end = RichOffset::from_utf16_offset(
                 &input_text,
-                input.selection_end().ok().flatten().unwrap_or_default() as usize,
+                input.selection_end().ok().flatten().unwrap_or(0) as usize,
             );
             if let Some(text_state) = state
                 .forest_content
@@ -259,27 +279,95 @@ pub fn RichTextArea() -> Html {
                     })
                 }
             }
-            state.set(state.deref().clone().trigger_update());
+            state = state.trigger_update();
+            state_handler.set(state);
         }
     });
     let onkeydown = Callback::from({
-        let state = state.clone();
+        let state_handler = state.clone();
         move |e: KeyboardEvent| {
+            let mut state = state_handler.deref().clone();
+
             let focused_node = state.focused_node;
             if focused_node == Ptr::null() {
                 return;
             }
-            console_log(format!("Input keycode: {}, node focused",e.key()));
-            if e.key() == "Enter" {
-                let forest = &mut *state.forest.borrow_mut();
-                let focused_parent = *forest.get_parent(focused_node);
-                let newline_element = forest.allocate_node(RichNode {
-                    kind: RichKind::Newline,
-                });
-                forest.add_child(focused_parent, newline_element);
+            console_log(format!("Input keycode: {}, node focused", e.key()));
+            let input_elem = e
+                .target_dyn_into::<HtmlInputElement>()
+                .expect("Failed to cast to InputElement");
+
+            let focused_node_type = state.forest.borrow().get_data(focused_node).clone();
+
+            match focused_node_type.kind {
+                RichKind::Text => {
+                    if e.key() == "Enter" {
+                        let new_text_node = {
+                            let forest = &mut *state.forest.borrow_mut();
+                            let forest_content = &mut *state.forest_content.borrow_mut();
+
+                            let focused_node_state = forest_content
+                                .get(&focused_node)
+                                .and_then(RichData::as_text)
+                                .cloned()
+                                .expect("Failed to fetch text state");
+
+                            let focused_parent = *forest.get_parent(focused_node);
+                            let newline_element = forest.allocate_node(RichNode {
+                                kind: RichKind::Newline,
+                            });
+
+                            let new_text_node = forest.allocate_node(RichNode {
+                                kind: RichKind::Text,
+                            });
+
+                            let caret_position = focused_node_state
+                                .selection
+                                .as_caret()
+                                .expect("Focused node expected to have a caret selection");
+                            let lower_split =
+                                String::from(&focused_node_state.text[..caret_position.utf8]);
+                            let upper_split =
+                                String::from(&focused_node_state.text[caret_position.utf8..]);
+
+                            if let Some(text_state) = forest_content
+                                .get_mut(&focused_node)
+                                .and_then(RichData::as_text_mut)
+                            {
+                                text_state.text = lower_split;
+                            }
+
+                            forest_content.insert(
+                                new_text_node,
+                                RichData::Text(TextState {
+                                    text: upper_split.clone(),
+                                    selection: TextSelectionKind::Caret(RichOffset::zero()),
+                                }),
+                            );
+
+                            input_elem.set_value(&upper_split);
+                            forest.add_child_at(focused_parent, newline_element,focused_node,1);
+                            forest.add_child_at(focused_parent, new_text_node,newline_element,1);
+
+                            new_text_node
+                        };
+                        state = state.set_focused_node(new_text_node);
+                        state.flush_overlays();
+                        state
+                            .forest_content
+                            .borrow_mut()
+                            .get_mut(&new_text_node)
+                            .and_then(RichData::as_text_mut)
+                            .expect("Failed to fetch text data")
+                            .selection = TextSelectionKind::Caret(RichOffset::zero());
+                    }
+                }
+                _ => panic!("NOT IMPLEMENTED"),
             }
 
-            state.set(state.deref().clone().trigger_update());
+            state = state.trigger_update();
+
+            state_handler.set(state);
         }
     });
 
@@ -376,27 +464,17 @@ fn RichDisplayNode(p: &RichDisplayNodeProps) -> Html {
             let clear_overlays = {
                 let ta_state = ta_state.clone();
                 Callback::from(move |_e: MouseEvent| {
-                    let document = ta_state.document;
-                    let forest = &mut *ta_state.forest.borrow_mut();
-                    let forest_content = &mut *ta_state.forest_content.borrow_mut();
-                    forest.traverse_all(document, |forest, node| {
-                        if let RichKind::Text = forest.get_data(node).kind {
-                            let text_node_state = forest_content
-                                .get_mut(&node)
-                                .and_then(RichData::as_text_mut)
-                                .expect("Failed to fetch text-node content");
-                            text_node_state.selection = TextSelectionKind::Unselected;
-                        }
-                        false
-                    });
+                    ta_state.deref().flush_overlays();
                 })
             };
 
             // 1. Callback to focus the hidden input when a custom text node is clicked
             let hand_over_control_to_hidden_input = {
                 let input_ref = input_ref.clone();
-                let ta_state = ta_state.clone();
+                let state_handler = ta_state.clone();
                 Callback::from(move |_e: MouseEvent| {
+                    let mut ta_state = state_handler.deref().clone();
+
                     if let Some(input) = input_ref.cast::<HtmlInputElement>() {
                         if let Ok(selection) = compute_text_selection() {
                             match selection.kind() {
@@ -442,7 +520,8 @@ fn RichDisplayNode(p: &RichDisplayNodeProps) -> Html {
                             let _ = input.focus();
                         }
 
-                        ta_state.set(ta_state.deref().clone().set_focused_node(root));
+                        ta_state = ta_state.set_focused_node(root);
+                        state_handler.set(ta_state);
                     }
                 })
             };

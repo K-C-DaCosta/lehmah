@@ -104,6 +104,9 @@ impl RichOffset {
     pub fn update_from_utf16(&mut self, source_text: &str, utf16_offset: usize) {
         *self = Self::from_utf16_offset(source_text, utf16_offset);
     }
+    pub fn zero() -> Self {
+        Self { utf8: 0, utf16: 0 }
+    }
 }
 
 #[derive(Copy, Clone, PartialEq)]
@@ -112,12 +115,23 @@ pub enum TextSelectionKind {
     Range(RichRange),
     Unselected,
 }
+impl TextSelectionKind {
+    pub fn as_caret(&self) -> Option<RichOffset> {
+        if let &Self::Caret(caret_position) = self {
+            Some(caret_position)
+        } else {
+            None
+        }
+    }
+}
 
 #[derive(Clone, PartialEq)]
 pub struct TextState {
     pub text: String,
     pub selection: TextSelectionKind,
 }
+
+impl TextState {}
 
 #[derive(Clone, PartialEq)]
 pub enum RichData {
