@@ -21,6 +21,7 @@ web-sys = { version = "0.3.80", features = [
     'KeyEvent',
     'HtmlInputElement',
     'Node',
+    'FocusOptions',
     'IdleRequestOptions'
 ] }
 

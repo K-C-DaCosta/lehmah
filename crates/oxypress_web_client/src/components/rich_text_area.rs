@@ -9,15 +9,13 @@ use oxypress_core::{
 };
 use std::{
     cell::RefCell,
-    char,
     collections::HashMap,
-    ops::{Deref, DerefMut},
+    ops::{Deref },
     rc::Rc,
 };
 use web_sys::{
-    js_sys::Array,
-    wasm_bindgen::{self, prelude::Closure, JsCast, JsValue},
-    window, HtmlElement, HtmlInputElement,
+    wasm_bindgen::{self, JsCast, JsValue},
+     FocusOptions,  HtmlInputElement,
 };
 use yew::{html::Html, prelude::*};
 
@@ -40,7 +38,7 @@ pub struct TextAreaState {
     document: Ptr<RichTag>,
     focused_node: Ptr<RichTag>,
     ast_selection: RichSelection,
-    update_counter: usize,
+    pub update_counter: usize,
 }
 
 impl TextAreaState {
@@ -172,10 +170,13 @@ fn TextAreaTool(p: &TextAreaToolProps) -> Html {
     });
     let tool_idx = p.tool_idx;
     let onclick = Callback::from({
-        let parent_state = p.parent_state.clone();
+        let parent_state_handler = p.parent_state.clone();
         move |e: web_sys::MouseEvent| {
             e.prevent_default();
-            parent_state.set(parent_state.deref().clone().set_tool(Some(tool_idx)));
+            let mut state = parent_state_handler.deref().clone();
+            state = state.set_tool(Some(tool_idx));
+            state = state.trigger_update();
+            parent_state_handler.set(state);
         }
     });
     html! {
@@ -394,7 +395,7 @@ pub fn RichTextArea() -> Html {
                     {for tool_iter}
                 </tool-container>
                 <text-container>
-                    <text-pure>
+                    <text-pure data-update-counter={state.update_counter.to_string()}>
                         // START RECURSING AT THE ROOT OF THE AST
                         <RichDisplayNode
                             ta_state={state.clone()}
@@ -404,7 +405,7 @@ pub fn RichTextArea() -> Html {
                             overlays_enabled={false}
                         />
                     </text-pure>
-                    <text-overlays>
+                    <text-overlays data-update-counter={state.update_counter.to_string()}>
                         <RichDisplayNode
                             ta_state={state.clone()}
                             root={state.document}
@@ -482,6 +483,8 @@ fn RichDisplayNode(p: &RichDisplayNodeProps) -> Html {
                 let state_handler = ta_state.clone();
                 Callback::from(move |_e: MouseEvent| {
                     let mut ta_state = state_handler.deref().clone();
+                    let focus_options = FocusOptions::new();
+                    focus_options.set_prevent_scroll(true);
 
                     if let Some(input) = input_ref.cast::<HtmlInputElement>() {
                         let clicked_text_node_is_empty = ta_state
@@ -495,7 +498,7 @@ fn RichDisplayNode(p: &RichDisplayNodeProps) -> Html {
 
                         if clicked_text_node_is_empty {
                             // SKIP SELECTION QUERY
-                            let _ = input.focus();
+                            let _ = input.focus_with_options(&focus_options);
                             input.set_value("");
                         } else if let Ok(selection) = compute_text_selection() {
                             match selection.kind() {
@@ -538,7 +541,7 @@ fn RichDisplayNode(p: &RichDisplayNodeProps) -> Html {
                                 RichSelectionKind::MultiNode => {}
                             }
 
-                            let _ = input.focus();
+                            let _ = input.focus_with_options(&focus_options);
                         }
 
                         ta_state = ta_state.set_focused_node(root);
@@ -618,7 +621,7 @@ fn RichDisplayNode(p: &RichDisplayNodeProps) -> Html {
         RichKind::Newline => {
             html! {
                 <>
-                    <rt-newline data-ast-id={root.to_string()}></rt-newline>{ZERO_WIDTH_SPACE}
+                    <rt-newline data-ast-id={root.to_string()}></rt-newline>
                 </>
             }
         }
