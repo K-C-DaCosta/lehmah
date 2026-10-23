@@ -1,4 +1,4 @@
-use std::{hash::Hash, marker::PhantomData};
+use std::{fmt::Display, hash::Hash, marker::PhantomData};
 
 pub mod bitset;
 pub mod flatforest;
@@ -26,10 +26,18 @@ impl<Tag> Ptr<Tag> {
         self.data += offset;
         self
     }
+
     pub fn to_index(&self) -> usize {
         self.data
     }
 }
+
+impl<Tag> Display for Ptr<Tag> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.data)
+    }
+}
+
 impl<Tag> PartialEq for Ptr<Tag> {
     fn eq(&self, other: &Self) -> bool {
         self.data == other.data
@@ -68,6 +76,11 @@ impl<Tag> From<usize> for Ptr<Tag> {
 impl<Tag> Hash for Ptr<Tag> {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
         state.write_usize(self.data);
+    }
+}
 
+impl<Tag> From<Ptr<Tag>> for usize {
+    fn from(value: Ptr<Tag>) -> Self {
+        value.to_index()
     }
 }

@@ -3,7 +3,7 @@ use std::{cell::RefCell, collections::HashMap, ops::Deref, rc::Rc};
 
 pub struct RichTag;
 
-#[derive(Copy, Clone, PartialEq)]
+#[derive(Copy, Clone, PartialEq, Debug)]
 pub enum RichKind {
     Document,
     Bold,

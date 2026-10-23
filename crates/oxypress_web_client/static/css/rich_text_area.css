@@ -79,14 +79,47 @@ rich-text-area rt-text {
     display: inline;
     white-space: pre-wrap;
 }
-
+@keyframes caretAnimation {
+    0%, 49%{
+        border: thin solid pink; 
+        border-width: 0px thin 0px 0px;
+    }
+    50%, 100% {
+        border: thin solid transparent;
+        border-width: 0px thin 0px 0px;
+    }
+}
 rich-text-area rt-caret {
     border:thin solid pink;
     border-width: 0px thin 0px 0px;
+    animation-name: caretAnimation;
+    animation-duration: 2000ms;
+    animation-iteration-count: infinite;
+
 }
 rich-text-area rt-selection {
     background-color: Highlight;
     color: HighlightText;
+}
+
+rich-text-area rt-newline {
+    display: block;
+    /*
+     *position: relative;
+    border: thin solid yellow;
+
+     */
+}
+
+rich-text-area .expand_empty {
+    display: inline-block;
+    min-width: 10ch;
+    min-height: 1lh;
+    border: thin solid yellow;
+}
+
+rich-text-area text-overlays .expand_empty {
+   border: thin solid transparent; 
 }
 
 /*

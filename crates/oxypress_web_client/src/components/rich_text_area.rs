@@ -346,8 +346,14 @@ pub fn RichTextArea() -> Html {
                             );
 
                             input_elem.set_value(&upper_split);
-                            forest.add_child_at(focused_parent, newline_element,focused_node,1);
-                            forest.add_child_at(focused_parent, new_text_node,newline_element,1);
+                            input_elem
+                                .set_selection_start(Some(0))
+                                .expect("Failed to set input start selection");
+                            input_elem
+                                .set_selection_end(Some(0))
+                                .expect("Failed to set input end selection");
+                            forest.add_child_at(focused_parent, newline_element, focused_node, 1);
+                            forest.add_child_at(focused_parent, new_text_node, newline_element, 1);
 
                             new_text_node
                         };
@@ -362,7 +368,9 @@ pub fn RichTextArea() -> Html {
                             .selection = TextSelectionKind::Caret(RichOffset::zero());
                     }
                 }
-                _ => panic!("NOT IMPLEMENTED"),
+                unhandled_case => {
+                    console_log(format!("[Warning] Unhandled Case {:?}", unhandled_case));
+                }
             }
 
             state = state.trigger_update();
@@ -445,7 +453,7 @@ fn RichDisplayNode(p: &RichDisplayNodeProps) -> Html {
         RichKind::Document => {
             html! {
                 <>
-                    <rt-document data-ast-id={root.to_index().to_string()}>
+                    <rt-document data-ast-id={root.to_string()}>
                         {for child_iterator}
                     </rt-document>
                 </>
@@ -454,7 +462,7 @@ fn RichDisplayNode(p: &RichDisplayNodeProps) -> Html {
         RichKind::Bold => {
             html! {
                 <>
-                    <rt-bold data-ast-id={root.to_index().to_string()} >
+                    <rt-bold data-ast-id={root.to_string()} >
                         {for child_iterator}
                     </rt-bold>
                 </>
@@ -476,7 +484,20 @@ fn RichDisplayNode(p: &RichDisplayNodeProps) -> Html {
                     let mut ta_state = state_handler.deref().clone();
 
                     if let Some(input) = input_ref.cast::<HtmlInputElement>() {
-                        if let Ok(selection) = compute_text_selection() {
+                        let clicked_text_node_is_empty = ta_state
+                            .forest_content
+                            .borrow()
+                            .get(&root)
+                            .and_then(RichData::as_text)
+                            .map(|state| &state.text)
+                            .map(String::is_empty)
+                            .unwrap_or(false);
+
+                        if clicked_text_node_is_empty {
+                            // SKIP SELECTION QUERY
+                            let _ = input.focus();
+                            input.set_value("");
+                        } else if let Ok(selection) = compute_text_selection() {
                             match selection.kind() {
                                 RichSelectionKind::MonoNode(character_range) => {
                                     let node = selection.start_node;
@@ -533,14 +554,20 @@ fn RichDisplayNode(p: &RichDisplayNodeProps) -> Html {
                 .and_then(RichData::as_text)
                 .cloned()
                 .expect("Failed to fetch Text state");
+            let mut aux_classes = String::new();
+            if text_state.text.is_empty() {
+                aux_classes.push_str(" expand_empty ");
+            }
 
             if !p.overlays_enabled {
+                // NOTE: SHOULD DUMP SIMILAR HTML TO `TextSelectionKind::Unselected`
                 return html! {
                     <>
                         <rt-text
-                            data-ast-id={root.to_index().to_string()}
+                            data-ast-id={root.to_string()}
                             onmousedown={clear_overlays}
                             onmouseup={hand_over_control_to_hidden_input}
+                            class={aux_classes.clone()}
                         >
                             {text_state.text}
                         </rt-text>
@@ -552,7 +579,10 @@ fn RichDisplayNode(p: &RichDisplayNodeProps) -> Html {
                 TextSelectionKind::Unselected => {
                     html! {
                         <>
-                            <rt-text data-ast-id={root.to_index().to_string()}>
+                            <rt-text
+                                data-ast-id={root.to_string()}
+                                class={aux_classes.clone()}
+                            >
                                 {text_state.text}
                             </rt-text>
                         </>
@@ -565,7 +595,7 @@ fn RichDisplayNode(p: &RichDisplayNodeProps) -> Html {
 
                     html! {
                         <>
-                            <rt-text data-ast-id={root.to_index().to_string()}>
+                            <rt-text data-ast-id={root.to_string()}>
                                 <rt-caret>{lower}</rt-caret>{upper}
                             </rt-text>
                         </>
@@ -577,7 +607,7 @@ fn RichDisplayNode(p: &RichDisplayNodeProps) -> Html {
                     let tail = &text_state.text[range.end.utf8..];
                     html! {
                         <>
-                            <rt-text data-ast-id={root.to_index().to_string()}>
+                            <rt-text data-ast-id={root.to_string()}>
                                 {head}<rt-selection>{selected}</rt-selection>{tail}
                             </rt-text>
                         </>
@@ -588,7 +618,7 @@ fn RichDisplayNode(p: &RichDisplayNodeProps) -> Html {
         RichKind::Newline => {
             html! {
                 <>
-                    <br/>{ZERO_WIDTH_SPACE}
+                    <rt-newline data-ast-id={root.to_string()}></rt-newline>{ZERO_WIDTH_SPACE}
                 </>
             }
         }
