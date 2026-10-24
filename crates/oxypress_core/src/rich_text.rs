@@ -15,16 +15,38 @@ bitflags! {
     }
 }
 
-#[derive(Copy, Clone, PartialEq, Debug)]
-pub enum RichKind {
+#[derive(Clone, PartialEq, Debug)]
+pub enum RichNodeKind {
     Document,
     Newline,
-    Text(InlineStyling),
+    Text(TextState),
 }
-impl RichKind {
+impl RichNodeKind {
+    pub fn as_text(&self)->Option<&TextState> {
+        if let Self::Text(state) = self {
+            Some(state)
+        }else{
+            None
+        }
+    }
+    
+    pub fn as_text_mut(&mut self)->Option<&mut TextState> {
+        if let Self::Text(state) = self {
+            Some(state)
+        }else{
+            None
+        }
+    }
+
     pub fn is_text_kind(&self) -> bool {
         matches!(self, Self::Text(_))
     }
+}
+
+#[derive(Clone, PartialEq, Debug)]
+pub struct TextState {
+    pub content: String,
+    pub styling: InlineStyling,
 }
 
 #[derive(Copy, Clone, PartialEq)]
@@ -142,20 +164,19 @@ impl TextSelectionKind {
 }
 
 #[derive(Clone, PartialEq)]
-pub struct TextState {
-    pub text: String,
+pub struct ExtraTextState {
     pub selection: TextSelectionKind,
 }
 
-impl TextState {}
+impl ExtraTextState {}
 
 #[derive(Clone, PartialEq)]
-pub enum RichData {
-    Text(TextState),
+pub enum RichAuxData {
+    Text(ExtraTextState),
     NOTHING,
 }
-impl RichData {
-    pub fn as_text(&self) -> Option<&TextState> {
+impl RichAuxData {
+    pub fn as_text(&self) -> Option<&ExtraTextState> {
         if let Self::Text(state) = self {
             Some(state)
         } else {
@@ -163,7 +184,7 @@ impl RichData {
         }
     }
 
-    pub fn as_text_mut(&mut self) -> Option<&mut TextState> {
+    pub fn as_text_mut(&mut self) -> Option<&mut ExtraTextState> {
         if let Self::Text(state) = self {
             Some(state)
         } else {
@@ -172,13 +193,8 @@ impl RichData {
     }
 }
 
-#[derive(Clone, PartialEq)]
-pub struct RichNode {
-    pub kind: RichKind,
-}
-
-pub type RichForest = FlatForest<RichTag, RichNode>;
-pub type RichContentTable = HashMap<Ptr<RichTag>, RichData>;
+pub type RichForest = FlatForest<RichTag, RichNodeKind>;
+pub type RichContentTable = HashMap<Ptr<RichTag>, RichAuxData>;
 
 /*
  * BELOW IS A PROOF OF CONCEPT AST I'LL PROBABLY NOT USE
