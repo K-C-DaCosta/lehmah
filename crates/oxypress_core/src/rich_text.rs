@@ -1,14 +1,30 @@
 use crate::collections::{flatforest::FlatForest, Ptr};
+use bitflags::bitflags;
 use std::{cell::RefCell, collections::HashMap, ops::Deref, rc::Rc};
 
 pub struct RichTag;
 
+bitflags! {
+    #[derive(Copy,Clone,PartialEq,Debug)]
+    pub struct InlineStyling: u32 {
+        const UNSTYLED= 0;
+        const BOLD = 1<<0;
+        const ITALICS = 1<<1;
+        const UNDERLINE = 1<<2;
+        const SPOILERS = 1<<3;
+    }
+}
+
 #[derive(Copy, Clone, PartialEq, Debug)]
 pub enum RichKind {
     Document,
-    Bold,
     Newline,
-    Text,
+    Text(InlineStyling),
+}
+impl RichKind {
+    pub fn is_text_kind(&self) -> bool {
+        matches!(self, Self::Text(_))
+    }
 }
 
 #[derive(Copy, Clone, PartialEq)]

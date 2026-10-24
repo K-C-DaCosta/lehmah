@@ -1,10 +1,10 @@
 use core::panic;
 use oxypress_core::{
-    collections::{flatforest::FlatForest, Ptr},
+    collections::Ptr,
     rich_text::{
-        RichCharacterRangeKind, RichContentTable, RichData, RichForest, RichKind, RichNode,
-        RichOffset, RichRange, RichSelection, RichSelectionKind, RichTag, TextSelectionKind,
-        TextState,
+        InlineStyling, RichCharacterRangeKind, RichContentTable, RichData, RichForest, RichKind,
+        RichNode, RichOffset, RichRange, RichSelection, RichSelectionKind, RichTag,
+        TextSelectionKind, TextState,
     },
 };
 use std::{cell::RefCell, collections::HashMap, ops::Deref, rc::Rc};
@@ -44,16 +44,11 @@ impl TextAreaState {
             kind: RichKind::Document,
         });
 
-        let bold = forest.allocate_node(RichNode {
-            kind: RichKind::Bold,
-        });
-
         let text = forest.allocate_node(RichNode {
-            kind: RichKind::Text,
+            kind: RichKind::Text(InlineStyling::BOLD),
         });
 
-        forest.add_child(bold, text);
-        forest.add_child(document, bold);
+        forest.add_child(document, text);
 
         forest_content
             .entry(text)
@@ -120,7 +115,7 @@ impl TextAreaState {
             let forest = &mut *self.forest.borrow_mut();
             let forest_content = &mut *self.forest_content.borrow_mut();
             forest.traverse_all(document, |forest, node| {
-                if let RichKind::Text = forest.get_data(node).kind {
+                if let RichKind::Text(_styling) = forest.get_data(node).kind {
                     let text_node_state = forest_content
                         .get_mut(&node)
                         .and_then(RichData::as_text_mut)
@@ -218,7 +213,7 @@ pub fn RichTextArea() -> Html {
                 let mut forest_content = state.forest_content.borrow_mut();
 
                 match focused_node_kind {
-                    RichKind::Text => {
+                    RichKind::Text(_focused_node_styling) => {
                         if let Some(RichData::Text(TextState { text, selection })) =
                             forest_content.get_mut(&focused_node)
                         {
@@ -294,7 +289,7 @@ pub fn RichTextArea() -> Html {
             let focused_node_type = state.forest.borrow().get_data(focused_node).clone();
 
             match focused_node_type.kind {
-                RichKind::Text => match e.key().as_str() {
+                RichKind::Text(focused_node_styling) => match e.key().as_str() {
                     "Enter" => {
                         let new_text_node = {
                             let forest = &mut *state.forest.borrow_mut();
@@ -312,7 +307,7 @@ pub fn RichTextArea() -> Html {
                             });
 
                             let new_text_node = forest.allocate_node(RichNode {
-                                kind: RichKind::Text,
+                                kind: RichKind::Text(focused_node_styling),
                             });
 
                             let caret_position = focused_node_state
@@ -371,10 +366,9 @@ pub fn RichTextArea() -> Html {
                             .cloned()
                             .expect("Failed to get text state");
 
-                        let caret_position = text_state
-                            .selection
-                            .as_caret();
-                        if caret_position.is_some() && caret_position.unwrap() == RichOffset::zero() {
+                        let caret_position = text_state.selection.as_caret();
+                        if caret_position.is_some() && caret_position.unwrap() == RichOffset::zero()
+                        {
                             let mut leafs: Vec<Ptr<RichTag>> = vec![];
                             let mut focused_index = !0;
                             state
@@ -382,7 +376,7 @@ pub fn RichTextArea() -> Html {
                                 .borrow_mut()
                                 .traverse_all(state.document, |f, root| {
                                     let root_kind = f.get_data(root).kind;
-                                    if RichKind::Text == root_kind {
+                                    if root_kind.is_text_kind() {
                                         leafs.push(root);
                                     }
                                     if focused_node == root {
@@ -497,16 +491,7 @@ fn RichDisplayNode(p: &RichDisplayNodeProps) -> Html {
                 </>
             }
         }
-        RichKind::Bold => {
-            html! {
-                <>
-                    <rt-bold data-ast-id={root.to_string()} >
-                        {for child_iterator}
-                    </rt-bold>
-                </>
-            }
-        }
-        RichKind::Text => {
+        RichKind::Text(inline_styling) => {
             let clear_overlays = {
                 let ta_state = ta_state.clone();
                 Callback::from(move |_e: MouseEvent| {
@@ -601,34 +586,36 @@ fn RichDisplayNode(p: &RichDisplayNodeProps) -> Html {
 
             if !p.overlays_enabled {
                 // NOTE: SHOULD DUMP SIMILAR HTML TO `TextSelectionKind::Unselected`
-                return html! {
-                    <>
-                        <rt-text
-                            data-ast-id={root.to_string()}
-                            onmousedown={clear_overlays}
-                            onmouseup={hand_over_control_to_hidden_input}
-                            class={aux_classes.clone()}
-                        >
-                            {text_state.text}
-                        </rt-text>
-                    </>
-                };
+                return apply_styles(inline_styling, move || {
+                    html! {
+                        <>
+                            <rt-text
+                                data-ast-id={root.to_string()}
+                                onmousedown={clear_overlays.clone()}
+                                onmouseup={hand_over_control_to_hidden_input.clone()}
+                                class={aux_classes.clone()}
+                            >
+                                {text_state.text.clone()}
+                            </rt-text>
+                        </>
+                    }
+                });
             }
 
             match text_state.selection {
-                TextSelectionKind::Unselected => {
+                TextSelectionKind::Unselected => apply_styles(inline_styling, move || {
                     html! {
                         <>
                             <rt-text
                                 data-ast-id={root.to_string()}
                                 class={aux_classes.clone()}
                             >
-                                {text_state.text}
+                                {text_state.text.clone()}
                             </rt-text>
                         </>
                     }
-                }
-                TextSelectionKind::Caret(split_offset) => {
+                }),
+                TextSelectionKind::Caret(split_offset) => apply_styles(inline_styling, move || {
                     let split_idx = split_offset.utf8;
                     let lower = &text_state.text[0..split_idx];
                     let upper = &text_state.text[split_idx..];
@@ -640,8 +627,8 @@ fn RichDisplayNode(p: &RichDisplayNodeProps) -> Html {
                             </rt-text>
                         </>
                     }
-                }
-                TextSelectionKind::Range(range) => {
+                }),
+                TextSelectionKind::Range(range) => apply_styles(inline_styling, move || {
                     let head = &text_state.text[0..range.start.utf8];
                     let selected = &text_state.text[range.start.utf8..range.end.utf8];
                     let tail = &text_state.text[range.end.utf8..];
@@ -652,7 +639,7 @@ fn RichDisplayNode(p: &RichDisplayNodeProps) -> Html {
                             </rt-text>
                         </>
                     }
-                }
+                }),
             }
         }
         RichKind::Newline => {
@@ -739,4 +726,57 @@ pub fn map_dom_node_to_rich_ast(node: web_sys::Node) -> Ptr<RichTag> {
         }
     }
     Ptr::null()
+}
+
+fn apply_styles<F>(styles: InlineStyling, lazy_base: F) -> yew::Html
+where
+    F: Fn() -> yew::Html,
+{
+    apply_styles_helper(0, 3, styles, lazy_base)
+}
+
+fn apply_styles_helper<F>(
+    cur_style_idx: usize,
+    max_styles: usize,
+    styles: InlineStyling,
+    lazy_base: F,
+) -> yew::Html
+where
+    F: Fn() -> yew::Html,
+{
+    if cur_style_idx >= max_styles {
+        return lazy_base();
+    }
+    let current_style = InlineStyling::from_bits(styles.bits() & (1 << cur_style_idx));
+    let inner_html = apply_styles_helper(cur_style_idx + 1, max_styles, styles, lazy_base);
+    match current_style {
+        Some(InlineStyling::BOLD) => {
+            html! {
+                <rt-bold>
+                    {inner_html}
+                </rt-bold>
+            }
+        }
+        Some(InlineStyling::UNDERLINE) => {
+            html! {
+                <rt-underline>
+                    {inner_html}
+                </rt-underline>
+            }
+        }
+        Some(InlineStyling::ITALICS) => {
+            html! {
+                <rt-italics>
+                    {inner_html}
+                </rt-italics>
+            }
+        }
+        _ => {
+            html! {
+                <>
+                {inner_html}
+                </>
+            }
+        }
+    }
 }

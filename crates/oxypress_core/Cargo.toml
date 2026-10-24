@@ -7,7 +7,7 @@ edition = "2024"
 chrono = "0.4.42"
 serde = {version = "1.0.228", features=["derive"]}
 uuid = { version = "1.10", features = ["v4", "serde"] }
-
+bitflags = {version = "2.13.2", features=["serde"]}
 
 # Enable JS runtime support for getrandom only on WASM target
 [target.'cfg(target_arch = "wasm32")'.dependencies]
