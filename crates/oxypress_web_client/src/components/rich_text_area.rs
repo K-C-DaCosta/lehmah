@@ -7,15 +7,10 @@ use oxypress_core::{
         TextState,
     },
 };
-use std::{
-    cell::RefCell,
-    collections::HashMap,
-    ops::{Deref },
-    rc::Rc,
-};
+use std::{cell::RefCell, collections::HashMap, ops::Deref, rc::Rc};
 use web_sys::{
     wasm_bindgen::{self, JsCast, JsValue},
-     FocusOptions,  HtmlInputElement,
+    FocusOptions, HtmlInputElement,
 };
 use yew::{html::Html, prelude::*};
 
@@ -160,12 +155,10 @@ fn TextAreaTool(p: &TextAreaToolProps) -> Html {
         local_tool_info.css_icon.as_ref(),
     ]
     .into_iter()
-    .enumerate()
-    .fold(String::new(), |mut acc, (idx, item)| {
-        if idx > 0 {
-            acc.push(' ');
-        }
+    .fold(String::new(), |mut acc, item| {
+        acc.push(' ');
         acc.push_str(item);
+        acc.push(' ');
         acc
     });
     let tool_idx = p.tool_idx;
@@ -301,8 +294,8 @@ pub fn RichTextArea() -> Html {
             let focused_node_type = state.forest.borrow().get_data(focused_node).clone();
 
             match focused_node_type.kind {
-                RichKind::Text => {
-                    if e.key() == "Enter" {
+                RichKind::Text => match e.key().as_str() {
+                    "Enter" => {
                         let new_text_node = {
                             let forest = &mut *state.forest.borrow_mut();
                             let forest_content = &mut *state.forest_content.borrow_mut();
@@ -368,7 +361,51 @@ pub fn RichTextArea() -> Html {
                             .expect("Failed to fetch text data")
                             .selection = TextSelectionKind::Caret(RichOffset::zero());
                     }
-                }
+                    "ArrowDown" => {}
+                    "ArrowLeft" => {
+                        let text_state = state
+                            .forest_content
+                            .borrow_mut()
+                            .get_mut(&focused_node)
+                            .and_then(RichData::as_text_mut)
+                            .cloned()
+                            .expect("Failed to get text state");
+
+                        let caret_position = text_state
+                            .selection
+                            .as_caret();
+                        if caret_position.is_some() && caret_position.unwrap() == RichOffset::zero() {
+                            let mut leafs: Vec<Ptr<RichTag>> = vec![];
+                            let mut focused_index = !0;
+                            state
+                                .forest
+                                .borrow_mut()
+                                .traverse_all(state.document, |f, root| {
+                                    let root_kind = f.get_data(root).kind;
+                                    if RichKind::Text == root_kind {
+                                        leafs.push(root);
+                                    }
+                                    if focused_node == root {
+                                        focused_index = leafs.len() - 1;
+                                        return true; //<- abort traversal
+                                    }
+                                    false
+                                });
+                            state.flush_overlays();
+                            state = state.set_focused_node(leafs[focused_index - 1]);
+                            if let Some(text_state) = state
+                                .forest_content
+                                .borrow_mut()
+                                .get_mut(&state.focused_node)
+                                .and_then(RichData::as_text_mut)
+                            {
+                                text_state.selection = TextSelectionKind::Caret(RichOffset::zero());
+                                input_elem.set_value(&text_state.text);
+                            }
+                        }
+                    }
+                    _ => {}
+                },
                 unhandled_case => {
                     console_log(format!("[Warning] Unhandled Case {:?}", unhandled_case));
                 }

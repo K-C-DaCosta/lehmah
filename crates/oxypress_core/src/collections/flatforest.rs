@@ -153,7 +153,13 @@ impl<Tag, T> FlatForest<Tag, T> {
         self.children[root.to_index()].push(child);
         self.parent[child.to_index()] = root;
     }
-    pub fn add_child_at(&mut self, root: Ptr<Tag>, child: Ptr<Tag>, target: Ptr<Tag>,offset:isize) {
+    pub fn add_child_at(
+        &mut self,
+        root: Ptr<Tag>,
+        child: Ptr<Tag>,
+        target: Ptr<Tag>,
+        offset: isize,
+    ) {
         let children = &mut self.children[root.to_index()];
 
         let target_position = children
@@ -163,8 +169,7 @@ impl<Tag, T> FlatForest<Tag, T> {
             .map(|(idx, _node)| idx)
             .expect("Failed to find target") as isize;
 
-
-        children.insert((target_position+offset) as usize, child);
+        children.insert((target_position + offset) as usize, child);
         self.parent[child.to_index()] = root;
     }
 
@@ -185,23 +190,26 @@ impl<Tag, T> FlatForest<Tag, T> {
     where
         F: FnMut(&mut Self, Ptr<Tag>) -> bool,
     {
-        self.traverse_all_helper(root, &mut on_root);
+        let _ = self.traverse_all_helper(root, &mut on_root);
     }
 
-    fn traverse_all_helper<F>(&mut self, root: Ptr<Tag>, on_root: &mut F)
+    fn traverse_all_helper<F>(&mut self, root: Ptr<Tag>, on_root: &mut F) -> bool
     where
         F: FnMut(&mut Self, Ptr<Tag>) -> bool,
     {
         if root == Ptr::null() {
-            return;
+            return false;
         }
         let len = self.get_children(root).len();
         (on_root)(self, root);
 
         for k in 0..len {
             let child = self.get_children(root)[k];
-            self.traverse_all_helper(child, on_root);
+            if self.traverse_all_helper(child, on_root) {
+                return true;
+            }
         }
+        false
     }
 
     /// # Safety
