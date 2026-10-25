@@ -241,6 +241,7 @@ pub fn RichTextArea() -> Html {
     let onselectionchange = Callback::from({
         let state_handler = state.clone();
         move |e: Event| {
+            console_log("ONSELECTIONCHANGE fired!".into());
             let mut state = state_handler.deref().clone();
 
             let focused_node = state.focused_node;
@@ -359,7 +360,6 @@ pub fn RichTextArea() -> Html {
                             .expect("Failed to fetch text data")
                             .selection = TextSelectionKind::Caret(RichOffset::zero());
                     }
-                    "ArrowDown" => {}
                     "ArrowLeft" => {
                         let text_state = state
                             .forest_content
@@ -372,37 +372,25 @@ pub fn RichTextArea() -> Html {
                         let caret_position = text_state.selection.as_caret();
                         if caret_position.is_some() && caret_position.unwrap() == RichOffset::zero()
                         {
-                            let mut leafs: Vec<Ptr<RichTag>> = vec![];
-                            let mut focused_index = !0;
-                            state
-                                .forest
-                                .borrow_mut()
-                                .traverse_all(state.document, |f, root| {
-                                    let root_kind = f.get_data(root);
-                                    if root_kind.is_text_kind() {
-                                        leafs.push(root);
-                                    }
-                                    if focused_node == root {
-                                        focused_index = leafs.len() - 1;
-                                        return true; //<- abort traversal
-                                    }
-                                    false
-                                });
-                            state.flush_overlays();
-                            state = state.set_focused_node(leafs[focused_index - 1]);
-                            if let Some(text_state) = state
-                                .forest_content
-                                .borrow_mut()
-                                .get_mut(&state.focused_node)
-                                .and_then(RichAuxData::as_text_mut)
-                            {
-                                text_state.selection = TextSelectionKind::Caret(RichOffset::zero());
-                                if let Some(text_state) =
-                                    state.forest.borrow().get_data(state.focused_node).as_text()
-                                {
-                                    input_elem.set_value(&text_state.content);
-                                }
-                            }
+                            state = focus_on_adjacent(state, focused_node, &input_elem, -1);
+                            e.prevent_default();
+                        }
+                    }
+                    "ArrowRight" => {
+                        let text_state = state
+                            .forest_content
+                            .borrow_mut()
+                            .get_mut(&focused_node)
+                            .and_then(RichAuxData::as_text_mut)
+                            .cloned()
+                            .expect("Failed to get text state");
+
+                        let caret_position = text_state.selection.as_caret();
+                        if caret_position.is_some()
+                            && caret_position.unwrap().utf8 == focused_node_state.content.len()
+                        {
+                            state = focus_on_adjacent(state, focused_node, &input_elem, 1);
+                            e.prevent_default();
                         }
                     }
                     _ => {}
@@ -456,6 +444,53 @@ pub fn RichTextArea() -> Html {
             </rich-text-area>
         </>
     }
+}
+
+pub fn focus_on_adjacent(
+    mut state: TextAreaState,
+    focused_node: Ptr<RichTag>,
+    input_elem: &HtmlInputElement,
+    offset: isize,
+) -> TextAreaState {
+    let mut leafs: Vec<Ptr<RichTag>> = vec![];
+    let mut focused_index = !0;
+    state
+        .forest
+        .borrow_mut()
+        .traverse_all(state.document, |f, root| {
+            let root_kind = f.get_data(root);
+            if root_kind.is_text_kind() {
+                leafs.push(root);
+            }
+            if focused_node == root {
+                focused_index = leafs.len() - 1;
+                return true; //<- abort traversal
+            }
+            false
+        });
+    state.flush_overlays();
+    state = state.set_focused_node(leafs[(focused_index as isize + offset) as usize]);
+    if let Some(extra_text_state) = state
+        .forest_content
+        .borrow_mut()
+        .get_mut(&state.focused_node)
+        .and_then(RichAuxData::as_text_mut)
+        && let Some(text_state) = state.forest.borrow().get_data(state.focused_node).as_text()
+    {
+        input_elem.set_value(&text_state.content);
+        console_log(format!("input value is now = \"{}\"", text_state.content));
+        if offset > 0 {
+            let _ = input_elem.set_selection_start(Some(0));
+            let _ = input_elem.set_selection_end(Some(0));
+            extra_text_state.selection = TextSelectionKind::Caret(RichOffset::zero());
+        } else {
+            let last = RichOffset::from_utf8_offset(&text_state.content, text_state.content.len());
+            extra_text_state.selection = TextSelectionKind::Caret(last);
+            console_log(format!("Last = {}", last.utf16));
+            let _ = input_elem.set_selection_range(last.utf16 as u32, last.utf16 as u32);
+        }
+    }
+    state
 }
 
 #[derive(Properties, PartialEq)]
