@@ -1,3 +1,4 @@
+use bitflags::Flags;
 use core::panic;
 use oxypress_core::{
     collections::Ptr,
@@ -7,7 +8,7 @@ use oxypress_core::{
         TextSelectionKind, TextState,
     },
 };
-use std::{cell::RefCell, collections::HashMap, ops::Deref, rc::Rc};
+use std::{cell::RefCell, collections::HashMap, f32::EPSILON, ops::Deref, rc::Rc};
 use web_sys::{
     wasm_bindgen::{self, JsCast, JsValue},
     FocusOptions, HtmlInputElement,
@@ -372,7 +373,12 @@ pub fn RichTextArea() -> Html {
                         let caret_position = text_state.selection.as_caret();
                         if caret_position.is_some() && caret_position.unwrap() == RichOffset::zero()
                         {
-                            state = focus_on_adjacent(state, focused_node, &input_elem, -1);
+                            state = move_caret_horizontal(
+                                state,
+                                focused_node,
+                                &input_elem,
+                                CaretDirection::Left,
+                            );
                             e.prevent_default();
                         }
                     }
@@ -389,9 +395,32 @@ pub fn RichTextArea() -> Html {
                         if caret_position.is_some()
                             && caret_position.unwrap().utf8 == focused_node_state.content.len()
                         {
-                            state = focus_on_adjacent(state, focused_node, &input_elem, 1);
+                            state = move_caret_horizontal(
+                                state,
+                                focused_node,
+                                &input_elem,
+                                CaretDirection::Right,
+                            );
                             e.prevent_default();
                         }
+                    }
+                    "ArrowDown" => {
+                        e.prevent_default();
+                        state = move_caret_vertical(
+                            state,
+                            focused_node,
+                            &input_elem,
+                            CaretDirection::Down,
+                        );
+                    }
+                    "ArrowUp" => {
+                        e.prevent_default();
+                        state = move_caret_vertical(
+                            state,
+                            focused_node,
+                            &input_elem,
+                            CaretDirection::Up,
+                        );
                     }
                     _ => {}
                 },
@@ -446,12 +475,15 @@ pub fn RichTextArea() -> Html {
     }
 }
 
-pub fn focus_on_adjacent(
+pub fn move_caret_horizontal(
     mut state: TextAreaState,
     focused_node: Ptr<RichTag>,
     input_elem: &HtmlInputElement,
-    offset: isize,
+    direction: CaretDirection,
 ) -> TextAreaState {
+    // TODO: The way im collecting leaf nodes isn't optimal
+    // at all, this could be improved, im leaving this alone
+    // because this works for right now
     let mut leafs: Vec<Ptr<RichTag>> = vec![];
     let mut focused_index = !0;
     state
@@ -468,8 +500,11 @@ pub fn focus_on_adjacent(
             }
             false
         });
+
     state.flush_overlays();
-    state = state.set_focused_node(leafs[(focused_index as isize + offset) as usize]);
+    state = state.set_focused_node(
+        leafs[(focused_index as isize + direction.to_sign_horizontal()) as usize],
+    );
     if let Some(extra_text_state) = state
         .forest_content
         .borrow_mut()
@@ -479,11 +514,12 @@ pub fn focus_on_adjacent(
     {
         input_elem.set_value(&text_state.content);
         console_log(format!("input value is now = \"{}\"", text_state.content));
-        if offset > 0 {
+
+        if let CaretDirection::Right = direction {
             let _ = input_elem.set_selection_start(Some(0));
             let _ = input_elem.set_selection_end(Some(0));
             extra_text_state.selection = TextSelectionKind::Caret(RichOffset::zero());
-        } else {
+        } else if let CaretDirection::Left = direction {
             let last = RichOffset::from_utf8_offset(&text_state.content, text_state.content.len());
             extra_text_state.selection = TextSelectionKind::Caret(last);
             console_log(format!("Last = {}", last.utf16));
@@ -554,6 +590,8 @@ fn RichDisplayNode(p: &RichDisplayNodeProps) -> Html {
                     let focus_options = FocusOptions::new();
                     focus_options.set_prevent_scroll(true);
 
+                    console_log("RT-TEXT ON MOUSEUP FIRED".into());
+
                     if let Some(input) = input_ref.cast::<HtmlInputElement>() {
                         let clicked_text_node_is_empty = ta_state
                             .forest
@@ -568,6 +606,14 @@ fn RichDisplayNode(p: &RichDisplayNodeProps) -> Html {
                             // SKIP SELECTION QUERY
                             let _ = input.focus_with_options(&focus_options);
                             input.set_value("");
+                            if let Some(state) = ta_state
+                                .forest_content
+                                .borrow_mut()
+                                .get_mut(&root)
+                                .and_then(RichAuxData::as_text_mut)
+                            {
+                                state.selection = TextSelectionKind::Caret(RichOffset::zero());
+                            }
                         } else if let Ok(selection) = compute_text_selection() {
                             match selection.kind() {
                                 RichSelectionKind::MonoNode(character_range) => {
@@ -785,51 +831,248 @@ fn apply_styles<F>(styles: InlineStyling, lazy_base: F) -> yew::Html
 where
     F: Fn() -> yew::Html,
 {
-    apply_styles_helper(0, 3, styles, lazy_base)
+    let mut result = lazy_base();
+    for flag in InlineStyling::FLAGS.iter() {
+        let available_style = *flag.value();
+        if styles.contains(available_style) {
+            result = match available_style {
+                InlineStyling::BOLD => html! { <rt-bold>{result}</rt-bold> },
+                InlineStyling::ITALICS => html! { <rt-italics>{result}</rt-italics>},
+                InlineStyling::SPOILERS => html! { <rt-spoilers>{result}</rt-spoilers>},
+                InlineStyling::UNDERLINE => html! { <rt-underline>{result}</rt-underline> },
+                InlineStyling::UNSTYLED => result,
+                _ => panic!("Unknown style"),
+            };
+        }
+    }
+    result
 }
 
-fn apply_styles_helper<F>(
-    cur_style_idx: usize,
-    max_styles: usize,
-    styles: InlineStyling,
-    lazy_base: F,
-) -> yew::Html
-where
-    F: Fn() -> yew::Html,
-{
-    if cur_style_idx >= max_styles {
-        return lazy_base();
+fn move_caret_vertical(
+    mut state: TextAreaState,
+    focused_node: Ptr<RichTag>,
+    input_elem: &HtmlInputElement,
+    query_direction: CaretDirection,
+) -> TextAreaState {
+    let extra_focused_node_state = state
+        .forest_content
+        .borrow()
+        .get(&focused_node)
+        .and_then(RichAuxData::as_text)
+        .cloned()
+        .expect("Failed to fetch text state from currently focused node");
+    let caret_position = extra_focused_node_state
+        .selection
+        .as_caret()
+        .expect("Failed to get caret offset");
+
+    let rt_text_elem = find_rich_text_node_in_dom(focused_node);
+    let rt_text_text_node = rt_text_elem
+        .child_nodes()
+        .get(0)
+        .expect("Failed to get the #text node inside of the rt-text element");
+
+    let (query_point_x, query_point_y) =
+        compute_query_point_from_text_node(&rt_text_text_node, caret_position, query_direction);
+
+    if let Some(query_element) = element_from_point(query_point_x, query_point_y) {
+        console_log(format!("Element found: \"{}\"", query_element.outer_html()));
+
+        let text_node = query_element
+            .child_nodes()
+            .get(0)
+            .expect("Failed to get text_node");
+
+        let caret_position = get_caret_position_from_point(text_node, query_point_x, query_point_y);
+
+        let find_rich_node_ptr_from_element = |query_element: web_sys::Element| {
+            Ptr::<RichTag>::from(
+                query_element
+                    .get_attribute("data-ast-id")
+                    .expect("Failed to get ast-id")
+                    .parse::<usize>()
+                    .expect("Failed to parse Id"),
+            )
+        };
+
+        let vertically_adjacent_node = find_rich_node_ptr_from_element(query_element);
+
+        state = state.set_focused_node(vertically_adjacent_node);
+        state.flush_overlays();
+        if let Some(extra_state) = state
+            .forest_content
+            .borrow_mut()
+            .get_mut(&vertically_adjacent_node)
+            .and_then(RichAuxData::as_text_mut)
+        {
+            extra_state.selection = TextSelectionKind::Caret(caret_position);
+        }
+
+        let vertically_adjacent_text_state = state
+            .forest
+            .borrow()
+            .get_data(vertically_adjacent_node)
+            .as_text()
+            .cloned()
+            .expect("Failed to get text node");
+        input_elem.set_value(&vertically_adjacent_text_state.content);
+        input_elem
+            .set_selection_range(caret_position.utf16 as u32, caret_position.utf16 as u32)
+            .expect("Failed to set selection range");
+    } else {
+        console_log("Point query found nothing".into());
     }
-    let current_style = InlineStyling::from_bits(styles.bits() & (1 << cur_style_idx));
-    let inner_html = apply_styles_helper(cur_style_idx + 1, max_styles, styles, lazy_base);
-    match current_style {
-        Some(InlineStyling::BOLD) => {
-            html! {
-                <rt-bold>
-                    {inner_html}
-                </rt-bold>
-            }
+    state
+}
+
+#[derive(Copy, Clone, PartialEq)]
+pub enum CaretDirection {
+    Up,
+    Down,
+    Left,
+    Right,
+}
+impl CaretDirection {
+    pub fn to_sign_vertical(&self) -> f32 {
+        match self {
+            Self::Down => 1.0,
+            Self::Up => -1.0,
+            _ => panic!("Unexpected caret direction"),
         }
-        Some(InlineStyling::UNDERLINE) => {
-            html! {
-                <rt-underline>
-                    {inner_html}
-                </rt-underline>
-            }
+    }
+    pub fn to_sign_horizontal(&self) -> isize {
+        match self {
+            Self::Left => -1,
+            Self::Right => 1,
+            _ => panic!("Unexpected caret direction"),
         }
-        Some(InlineStyling::ITALICS) => {
-            html! {
-                <rt-italics>
-                    {inner_html}
-                </rt-italics>
-            }
+    }
+}
+
+pub fn compute_query_point_from_text_node(
+    text_node: &web_sys::Node,
+    caret_position: RichOffset,
+    direction: CaretDirection,
+) -> (f32, f32) {
+    let range = web_sys::Range::new().expect("Failed to create range");
+    range
+        .set_start(text_node, caret_position.utf16 as u32)
+        .expect("Failed to set start range");
+    range
+        .set_end(text_node, caret_position.utf16 as u32)
+        .expect("Failed to set end range");
+    let cur_caret_rect = range.get_bounding_client_rect();
+    let caret_center_x = cur_caret_rect.x() + cur_caret_rect.width() * 0.5;
+    let caret_center_y = cur_caret_rect.y() + cur_caret_rect.height() * 0.5;
+    let offset_y = cur_caret_rect.height() * direction.to_sign_vertical() as f64;
+
+    (caret_center_x as f32, (caret_center_y + offset_y) as f32)
+}
+pub fn element_from_point(x: f32, y: f32) -> Option<web_sys::Element> {
+    let document = web_sys::window()
+        .and_then(|w| w.document())
+        .expect("Failed to get document");
+    document.element_from_point(x, y)
+}
+
+pub fn find_rich_text_node_in_dom(focused_node: Ptr<RichTag>) -> web_sys::Element {
+    let window = web_sys::window().expect("Failed to get window");
+    let document = window.document().expect("Failed to get document");
+    let focused_node_query = format!(
+        "rich-text-area > text-container > text-pure rt-text[data-ast-id=\"{}\"]",
+        focused_node.to_index()
+    );
+
+    console_log(format!("Executing Query: \"{}\"", focused_node_query));
+    let results = document
+        .query_selector(&focused_node_query)
+        .expect("Failed to execute query");
+    results.expect("Failed to find rt-text node in the dom")
+}
+
+pub fn get_caret_position_from_point(
+    text_node: web_sys::Node,
+    query_point_x: f32,
+    query_point_y: f32,
+) -> RichOffset {
+    let text = text_node
+        .text_content()
+        .expect("Failed to get text content");
+
+    let range = web_sys::Range::new().expect("Failed to create range");
+    range
+        .set_start(&text_node, 0)
+        .expect("Failed to set range start");
+
+    // compute caret position from position
+    let mut end_utf16 = 0;
+    let mut end_utf8 = 0;
+    let mut start_utf16 = 0;
+    range.set_start(&text_node, 0).expect("Failed to set start");
+    range.set_end(&text_node, 0).expect("Faield to set end");
+    let line_height = range.get_bounding_client_rect().height();
+    let line_y = range.get_bounding_client_rect().y();
+    let mut min_distance = f32::INFINITY;
+
+    let calc_line_idx = |point_y: f32| ((point_y - line_y as f32) / (line_height as f32)).floor();
+    let is_eq_approx = |a: f32, b: f32| (b - a).abs() < EPSILON;
+
+    let target_line_idx = calc_line_idx(query_point_y);
+
+    let mut best_utf8 = 0;
+    let mut best_utf16 = 0;
+    console_log(format!("Starting line height is:{}", line_height));
+
+    for c in text.chars() {
+        end_utf16 += c.len_utf16();
+        end_utf8 += c.len_utf8();
+        range.set_start(&text_node, start_utf16 as u32).unwrap();
+        range
+            .set_end(&text_node, end_utf16 as u32)
+            .expect("Failed to set range end");
+        let mut aabb = range.get_bounding_client_rect();
+        if (aabb.height() - line_height).abs() > 1.0 {
+            start_utf16 = end_utf16;
+            range
+                .set_start(&text_node, start_utf16 as u32)
+                .expect("Failed up update start range");
+            aabb = range.get_bounding_client_rect();
+            /*console_log(format!(
+                "new aabb height is = {}, new vertical y={} width = {}",
+                aabb.height(),
+                aabb.y(),
+                aabb.width(),
+            ));*/
         }
-        _ => {
-            html! {
-                <>
-                {inner_html}
-                </>
-            }
+
+        let cur_line_idx = calc_line_idx(aabb.y() as f32);
+
+        let padding = 10.0;
+        let aabb_x = (aabb.x() - padding) as f32;
+        let aabb_y = (aabb.y() - padding) as f32;
+        let aabb_w = (aabb.width() + padding) as f32;
+        let aabb_h = (aabb.height() + padding) as f32;
+        let right_mid_x = aabb_x + aabb_w;
+        let right_mid_y = aabb_y + aabb_h * 0.5;
+
+        let dx = right_mid_x - query_point_x;
+        let dy = right_mid_y - query_point_y;
+        let dist = dx.abs() + dy.abs();
+        if dist < min_distance && is_eq_approx(target_line_idx, cur_line_idx) {
+            min_distance = dist;
+            best_utf8 = end_utf8;
+            best_utf16 = end_utf16;
         }
+        if query_point_x > aabb_x
+            && query_point_x < (aabb_x + aabb_w)
+            && query_point_y > aabb_y
+            && query_point_y < (aabb_y + aabb_h)
+        {
+            break;
+        }
+    }
+    RichOffset {
+        utf8: best_utf8,
+        utf16: best_utf16,
     }
 }

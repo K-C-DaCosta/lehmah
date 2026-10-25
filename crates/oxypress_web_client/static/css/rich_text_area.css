@@ -76,8 +76,9 @@ rich-text-area rt-bold {
 }
 
 rich-text-area rt-text {
-    display: inline;
+    display: block;
     white-space: pre-wrap;
+    /*border: thin solid orange;*/
 }
 @keyframes caretAnimation {
     0%, 49%{
@@ -122,8 +123,8 @@ rich-text-area rt-newline {
 }
 
 rich-text-area .expand_empty {
-    display: inline-block;
-    min-width: 99%;
+    /*display: inline-block;*/
+    /*min-width: 99%;*/
     min-height: 1lh;
     border: thin solid yellow;
 }
