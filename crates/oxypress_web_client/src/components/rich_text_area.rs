@@ -8,7 +8,7 @@ use oxypress_core::{
         TextSelectionKind, TextState,
     },
 };
-use std::{cell::RefCell, collections::HashMap, f32::EPSILON, ops::Deref, rc::Rc};
+use std::{cell::RefCell, collections::HashMap, ops::Deref, rc::Rc};
 use web_sys::{
     wasm_bindgen::{self, JsCast, JsValue},
     FocusOptions, HtmlInputElement,
@@ -484,27 +484,21 @@ pub fn move_caret_horizontal(
     // TODO: The way im collecting leaf nodes isn't optimal
     // at all, this could be improved, im leaving this alone
     // because this works for right now
-    let mut leafs: Vec<Ptr<RichTag>> = vec![];
-    let mut focused_index = !0;
-    state
-        .forest
-        .borrow_mut()
-        .traverse_all(state.document, |f, root| {
-            let root_kind = f.get_data(root);
-            if root_kind.is_text_kind() {
-                leafs.push(root);
-            }
-            if focused_node == root {
-                focused_index = leafs.len() - 1;
-                return true; //<- abort traversal
-            }
-            false
-        });
+    let (leaf_list, focused_index) = collect_leaf_nodes(&state, focused_node);
+
+    let adjacent_node_idx = focused_index as isize + direction.to_sign_horizontal();
+
+    let is_invalid_adjacent = |adjacent_node_idx: isize| {
+        adjacent_node_idx < 0 || adjacent_node_idx >= leaf_list.len() as isize
+    };
+
+    if is_invalid_adjacent(adjacent_node_idx) {
+        return state;
+    }
 
     state.flush_overlays();
-    state = state.set_focused_node(
-        leafs[(focused_index as isize + direction.to_sign_horizontal()) as usize],
-    );
+    state = state.set_focused_node(leaf_list[adjacent_node_idx as usize]);
+
     if let Some(extra_text_state) = state
         .forest_content
         .borrow_mut()
@@ -527,6 +521,29 @@ pub fn move_caret_horizontal(
         }
     }
     state
+}
+
+fn collect_leaf_nodes(
+    state: &TextAreaState,
+    focused_node: Ptr<RichTag>,
+) -> (Vec<Ptr<RichTag>>, usize) {
+    let mut leafs: Vec<Ptr<RichTag>> = vec![];
+    let mut focused_index = !0;
+    state
+        .forest
+        .borrow_mut()
+        .traverse_all(state.document, |f, root| {
+            let root_kind = f.get_data(root);
+            if root_kind.is_text_kind() {
+                leafs.push(root);
+            }
+            if focused_node == root {
+                focused_index = leafs.len() - 1;
+                return true; //<- abort traversal
+            }
+            false
+        });
+    (leafs, focused_index)
 }
 
 #[derive(Properties, PartialEq)]
@@ -877,6 +894,17 @@ fn move_caret_vertical(
 
     if let Some(query_element) = element_from_point(query_point_x, query_point_y) {
         console_log(format!("Element found: \"{}\"", query_element.outer_html()));
+        console_log(format!(
+            "query_element name = \"{}\"",
+            query_element.node_name()
+        ));
+
+        let valid_query_element_name =
+            |query_element: &web_sys::Element| query_element.node_name() == "RT-TEXT";
+        if !valid_query_element_name(&query_element) {
+            console_log("Vertical caret movement cancelled".into());
+            return state;
+        }
 
         let text_node = query_element
             .child_nodes()
@@ -919,6 +947,8 @@ fn move_caret_vertical(
         input_elem
             .set_selection_range(caret_position.utf16 as u32, caret_position.utf16 as u32)
             .expect("Failed to set selection range");
+
+        console_log("Vertical caret movement, completed".into());
     } else {
         console_log("Point query found nothing".into());
     }
@@ -961,7 +991,19 @@ pub fn compute_query_point_from_text_node(
     range
         .set_end(text_node, caret_position.utf16 as u32)
         .expect("Failed to set end range");
-    let cur_caret_rect = range.get_bounding_client_rect();
+    let mut cur_caret_rect = range.get_bounding_client_rect();
+
+    if cur_caret_rect.height() < f64::EPSILON {
+        if let Some(text_container) = text_node
+            .parent_node()
+            .and_then(|node| node.dyn_into::<web_sys::Element>().ok())
+        {
+            cur_caret_rect = text_container.get_bounding_client_rect();
+        } else {
+            panic!("Warning: Container element not found!");
+        }
+    }
+
     let caret_center_x = cur_caret_rect.x() + cur_caret_rect.width() * 0.5;
     let caret_center_y = cur_caret_rect.y() + cur_caret_rect.height() * 0.5;
     let offset_y = cur_caret_rect.height() * direction.to_sign_vertical() as f64;
@@ -1015,7 +1057,7 @@ pub fn get_caret_position_from_point(
     let mut min_distance = f32::INFINITY;
 
     let calc_line_idx = |point_y: f32| ((point_y - line_y as f32) / (line_height as f32)).floor();
-    let is_eq_approx = |a: f32, b: f32| (b - a).abs() < EPSILON;
+    let is_eq_approx = |a: f32, b: f32| (b - a).abs() < f32::EPSILON;
 
     let target_line_idx = calc_line_idx(query_point_y);
 
