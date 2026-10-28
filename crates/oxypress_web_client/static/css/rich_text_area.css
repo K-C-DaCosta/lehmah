@@ -50,7 +50,7 @@ rich-text-area text-overlays {
     /* Critical for proper text wrapping */
     display: block;
     width: 100%;
-    white-space: pre-wrap;
+    white-space: break-spaces;
     word-break: break-word;
     overflow-wrap: break-word;
 }
@@ -77,7 +77,6 @@ rich-text-area rt-bold {
 
 rich-text-area rt-text {
     display: block;
-    white-space: pre-wrap;
     /*border: thin solid orange;*/
 }
 @keyframes caretAnimation {

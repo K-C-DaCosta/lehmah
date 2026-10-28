@@ -1,6 +1,8 @@
 use std::{ops::Deref, rc::Rc};
 use yew::{prelude::*, Callback, Properties};
 
+use crate::entry_point::console_log;
+
 
 #[derive(Clone, PartialEq, Properties)]
 pub struct TabElemParam<ExtState>
@@ -104,12 +106,13 @@ where
         let state = state.clone();
         move |event: web_sys::WheelEvent| {
             event.prevent_default();
-            let offset = event.delta_y().signum() as isize;
+            /*let offset = event.delta_y().signum() as isize;
             let new_idx =
                 (state.active_tab_idx as isize + offset).rem_euclid(tab_len as isize) as usize;
             state.set(TabbedFrameState {
                 active_tab_idx: new_idx,
-            });
+            });*/
+            console_log("Onwhell stubbed".into());
         }
     });
     let active_tab_content = p

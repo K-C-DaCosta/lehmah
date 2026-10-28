@@ -11,7 +11,7 @@ use oxypress_core::{
 use std::{cell::RefCell, collections::HashMap, ops::Deref, rc::Rc};
 use web_sys::{
     wasm_bindgen::{self, JsCast, JsValue},
-    FocusOptions, HtmlInputElement,
+    DomRect, FocusOptions, HtmlInputElement, Range,
 };
 use yew::{html::Html, prelude::*};
 
@@ -991,24 +991,29 @@ pub fn compute_query_point_from_text_node(
     range
         .set_end(text_node, caret_position.utf16 as u32)
         .expect("Failed to set end range");
-    let mut cur_caret_rect = range.get_bounding_client_rect();
+    let mut cur_caret_rect = RichRect::from(&range.get_bounding_client_rect());
 
-    if cur_caret_rect.height() < f64::EPSILON {
+    if cur_caret_rect.h < f32::EPSILON {
         if let Some(text_container) = text_node
             .parent_node()
             .and_then(|node| node.dyn_into::<web_sys::Element>().ok())
         {
-            cur_caret_rect = text_container.get_bounding_client_rect();
+            let dom_aabb = text_container.get_bounding_client_rect();
+            // FALLBACK RECT FOR WHEN THE TEXT_NODE RECT HAS NO HEIGHT
+            cur_caret_rect = RichRect {
+                x: dom_aabb.x() as f32,
+                y: dom_aabb.y() as f32,
+                w: 0.0,
+                h: dom_aabb.height() as f32,
+            };
         } else {
             panic!("Warning: Container element not found!");
         }
     }
-
-    let caret_center_x = cur_caret_rect.x() + cur_caret_rect.width() * 0.5;
-    let caret_center_y = cur_caret_rect.y() + cur_caret_rect.height() * 0.5;
-    let offset_y = cur_caret_rect.height() * direction.to_sign_vertical() as f64;
-
-    (caret_center_x as f32, (caret_center_y + offset_y) as f32)
+    let caret_center_x = cur_caret_rect.x + cur_caret_rect.w * 0.5;
+    let caret_center_y = cur_caret_rect.y + cur_caret_rect.h * 0.5;
+    let offset_y = cur_caret_rect.h * direction.to_sign_vertical();
+    (caret_center_x, caret_center_y + offset_y)
 }
 pub fn element_from_point(x: f32, y: f32) -> Option<web_sys::Element> {
     let document = web_sys::window()
@@ -1041,80 +1046,167 @@ pub fn get_caret_position_from_point(
         .text_content()
         .expect("Failed to get text content");
 
-    let range = web_sys::Range::new().expect("Failed to create range");
-    range
-        .set_start(&text_node, 0)
-        .expect("Failed to set range start");
+    let wrapped_lines = compute_wrapped_lines_in_text_node(&text_node);
+    let range = Range::new().unwrap();
 
-    // compute caret position from position
-    let mut end_utf16 = 0;
-    let mut end_utf8 = 0;
-    let mut start_utf16 = 0;
-    range.set_start(&text_node, 0).expect("Failed to set start");
-    range.set_end(&text_node, 0).expect("Faield to set end");
-    let line_height = range.get_bounding_client_rect().height();
-    let line_y = range.get_bounding_client_rect().y();
+    let starting_row_aabb = wrapped_lines
+        .first()
+        .map(|&(row_start, row_end)| {
+            range.set_start(&text_node, row_start.utf16 as u32).unwrap();
+            range.set_end(&text_node, row_end.utf16 as u32).unwrap();
+            RichRect::from(&range.get_bounding_client_rect())
+        })
+        .expect("Failed to get first row");
+
+    let target_row_idx =
+        ((query_point_y - starting_row_aabb.y).abs() / starting_row_aabb.h) as usize;
+
+    // print all rows
+    /*for (row_start, row_end) in wrapped_lines.iter().copied() {
+        range.set_start(&text_node, row_start.utf16 as u32).unwrap();
+        range.set_end(&text_node, row_end.utf16 as u32).unwrap();
+        let aabb = RichRect::from(&range.get_bounding_client_rect());
+        console_log(format!(
+            "Row: {} aabb:{}",
+            &text[row_start.utf8..row_end.utf8],
+            aabb
+        ));
+    }*/
+
+    console_log(format!(
+        "Query point = (x:{},y:{})",
+        query_point_x, query_point_y
+    ));
+
     let mut min_distance = f32::INFINITY;
-
-    let calc_line_idx = |point_y: f32| ((point_y - line_y as f32) / (line_height as f32)).floor();
-    let is_eq_approx = |a: f32, b: f32| (b - a).abs() < f32::EPSILON;
-
-    let target_line_idx = calc_line_idx(query_point_y);
-
-    let mut best_utf8 = 0;
-    let mut best_utf16 = 0;
-    console_log(format!("Starting line height is:{}", line_height));
-
-    for c in text.chars() {
-        end_utf16 += c.len_utf16();
-        end_utf8 += c.len_utf8();
-        range.set_start(&text_node, start_utf16 as u32).unwrap();
-        range
-            .set_end(&text_node, end_utf16 as u32)
-            .expect("Failed to set range end");
-        let mut aabb = range.get_bounding_client_rect();
-        if (aabb.height() - line_height).abs() > 1.0 {
-            start_utf16 = end_utf16;
-            range
-                .set_start(&text_node, start_utf16 as u32)
-                .expect("Failed up update start range");
-            aabb = range.get_bounding_client_rect();
-            /*console_log(format!(
-                "new aabb height is = {}, new vertical y={} width = {}",
-                aabb.height(),
-                aabb.y(),
-                aabb.width(),
-            ));*/
-        }
-
-        let cur_line_idx = calc_line_idx(aabb.y() as f32);
-
-        let padding = 10.0;
-        let aabb_x = (aabb.x() - padding) as f32;
-        let aabb_y = (aabb.y() - padding) as f32;
-        let aabb_w = (aabb.width() + padding) as f32;
-        let aabb_h = (aabb.height() + padding) as f32;
-        let right_mid_x = aabb_x + aabb_w;
-        let right_mid_y = aabb_y + aabb_h * 0.5;
-
-        let dx = right_mid_x - query_point_x;
-        let dy = right_mid_y - query_point_y;
-        let dist = dx.abs() + dy.abs();
-        if dist < min_distance && is_eq_approx(target_line_idx, cur_line_idx) {
-            min_distance = dist;
-            best_utf8 = end_utf8;
-            best_utf16 = end_utf16;
-        }
-        if query_point_x > aabb_x
-            && query_point_x < (aabb_x + aabb_w)
-            && query_point_y > aabb_y
-            && query_point_y < (aabb_y + aabb_h)
-        {
-            break;
+    let mut best = RichOffset::zero();
+    for (current_row_idx, (r0, r1)) in wrapped_lines.iter().copied().enumerate() {
+        let row_text = &text[r0.utf8..r1.utf8];
+        let mut end = r0;
+        range.set_start(&text_node, r0.utf16 as u32).unwrap();
+        let char_list = row_text.chars().collect::<Vec<_>>();
+        for (char_pos, &c) in char_list.iter().enumerate() {
+            end.offset_by(c);
+            range.set_end(&text_node, end.utf16 as u32).unwrap();
+            let aabb = RichRect::from(&range.get_bounding_client_rect());
+            let (east_mid_x, east_mid_y) = aabb.compute_east_midpoint();
+            let dx = east_mid_x - query_point_x;
+            let dy = east_mid_y - query_point_y;
+            let dist = dx * dx + dy * dy;
+            if dist < min_distance && target_row_idx == current_row_idx {
+                if char_pos == char_list.len() - 1 && c.is_whitespace() {
+                    // IGNORE character because its usually not rendered
+                    // in the browser
+                } else {
+                    min_distance = dist;
+                    best = end;
+                }
+            }
+            /*if current_row_idx == target_row_idx {
+                console_log(format!("aabb = {}", aabb));
+                console_log(format!("current_row = \"{}\"", range.to_string()));
+                console_log(format!("distance = {}", dist));
+            }*/
         }
     }
-    RichOffset {
-        utf8: best_utf8,
-        utf16: best_utf16,
+
+    console_log(format!("final min_distance ={}", min_distance));
+
+    best
+}
+fn compute_wrapped_lines_in_text_node(text_node: &web_sys::Node) -> Vec<(RichOffset, RichOffset)> {
+    let text = text_node
+        .text_content()
+        .expect("Failed to get text content");
+
+    let range = web_sys::Range::new().expect("Failed to create range");
+    range
+        .set_start(text_node, 0)
+        .expect("Failed to set range start");
+    range.set_end(text_node, 0).expect("Faield to set end");
+
+    // compute a "caret_rect" mainly computed for the dimensions, we need to know
+    // how "tall" in pixels a single character is AND we need to know where the top-left corner of
+    // the text begins. The single range query is used for that
+    let caret_rect = RichRect::from(&range.get_bounding_client_rect());
+
+    let mut start = RichOffset::zero();
+    let mut end = RichOffset::zero();
+    let mut prev_end = RichOffset::zero();
+    let line_height = caret_rect.h;
+
+    console_log(format!("Starting line height is:{}", line_height));
+    console_log(format!("caret_rect = {}", caret_rect));
+
+    let mut wrapped_lines: Vec<(RichOffset, RichOffset)> = vec![];
+    for c in text.chars() {
+        range.set_start(text_node, start.utf16 as u32).unwrap();
+        range
+            .set_end(text_node, end.utf16 as u32)
+            .expect("Failed to set range end");
+        let aabb = RichRect::from(&range.get_bounding_client_rect());
+        if (aabb.h - line_height).abs() > 1.0 {
+            wrapped_lines.push((start, prev_end));
+            start = prev_end;
+            range
+                .set_start(text_node, start.utf16 as u32)
+                .expect("Failed to update start range");
+            range
+                .set_end(text_node, end.utf16 as u32)
+                .expect("Failed to update end range");
+        }
+        prev_end = end;
+        end.offset_by(c);
+    }
+    //flush last line
+    wrapped_lines.push((start, end));
+    wrapped_lines
+}
+
+#[derive(Copy, Clone, PartialEq)]
+pub struct RichRect {
+    pub x: f32,
+    pub y: f32,
+    pub w: f32,
+    pub h: f32,
+}
+impl RichRect {
+    pub fn new() -> Self {
+        Self {
+            x: 0.0,
+            y: 0.0,
+            w: 0.0,
+            h: 0.0,
+        }
+    }
+    pub fn with_padding(mut self, padding: f32) -> Self {
+        self.x -= padding;
+        self.y -= padding;
+        self.w += padding;
+        self.h += padding;
+        self
+    }
+    pub fn contains_point(&self, x: f32, y: f32) -> bool {
+        let rx = x - self.x;
+        let ry = y - self.y;
+        rx > 0.0 && ry > 0.0 && rx < self.w && ry < self.h
+    }
+    pub fn compute_east_midpoint(&self) -> (f32, f32) {
+        (self.x + self.w, self.y + self.h * 0.5)
+    }
+}
+impl From<&web_sys::DomRect> for RichRect {
+    fn from(value: &web_sys::DomRect) -> Self {
+        Self {
+            x: value.x() as f32,
+            y: value.y() as f32,
+            w: value.width() as f32,
+            h: value.height() as f32,
+        }
+    }
+}
+impl std::fmt::Display for RichRect {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "[x:{},y:{},w:{},h:{}]", self.x, self.y, self.w, self.h)
     }
 }

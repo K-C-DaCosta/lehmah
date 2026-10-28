@@ -145,6 +145,10 @@ impl RichOffset {
     pub fn zero() -> Self {
         Self { utf8: 0, utf16: 0 }
     }
+    pub fn offset_by(&mut self,c: char){
+        self.utf8 += c.len_utf8();
+        self.utf16+=c.len_utf16();
+    }
 }
 
 #[derive(Copy, Clone, PartialEq)]
