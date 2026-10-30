@@ -198,7 +198,9 @@ fn forest_fuzz_simple() {
             "if node_cache actually works properly, no new nodes expected"
         );
 
-        println!("iter [{itcount}] completed <> nodes_alloc'd [{number_of_nodes}] <> nodes_recycled [{num_node_recycles}]");
+        println!(
+            "iter [{itcount}] completed <> nodes_alloc'd [{number_of_nodes}] <> nodes_recycled [{num_node_recycles}]"
+        );
     }
     //tree.free(nodes[2]);
 }

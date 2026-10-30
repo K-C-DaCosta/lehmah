@@ -186,14 +186,14 @@ impl<Tag, T> FlatForest<Tag, T> {
             self.free(child);
         }
     }
-    pub fn traverse_all<F>(&mut self, root: Ptr<Tag>, mut on_root: F)
+    pub fn traverse_all_mut<F>(&mut self, root: Ptr<Tag>, mut on_root: F)
     where
         F: FnMut(&mut Self, Ptr<Tag>) -> bool,
     {
-        let _ = self.traverse_all_helper(root, &mut on_root);
+        let _ = self.traverse_all_helper_mut(root, &mut on_root);
     }
 
-    fn traverse_all_helper<F>(&mut self, root: Ptr<Tag>, on_root: &mut F) -> bool
+    fn traverse_all_helper_mut<F>(&mut self, root: Ptr<Tag>, on_root: &mut F) -> bool
     where
         F: FnMut(&mut Self, Ptr<Tag>) -> bool,
     {
@@ -205,7 +205,7 @@ impl<Tag, T> FlatForest<Tag, T> {
 
         for k in 0..len {
             let child = self.get_children(root)[k];
-            if self.traverse_all_helper(child, on_root) {
+            if self.traverse_all_helper_mut(child, on_root) {
                 return true;
             }
         }

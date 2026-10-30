@@ -1,8 +1,7 @@
 use std::{ops::Deref, rc::Rc};
-use yew::{prelude::*, Callback, Properties};
+use yew::{Callback, Properties, prelude::*};
 
 use crate::entry_point::console_log;
-
 
 #[derive(Clone, PartialEq, Properties)]
 pub struct TabElemParam<ExtState>

@@ -1,12 +1,9 @@
-use super::*; 
-
-
+use super::*;
 
 pub struct FreeCache<Tag> {
     buffer: RingBuffer<[BlockIdx; 16]>,
     _tag: PhantomData<Tag>,
 }
-
 
 impl<Tag> FreeCache<Tag> {
     pub fn new() -> Self {

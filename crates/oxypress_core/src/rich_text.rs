@@ -1,4 +1,4 @@
-use crate::collections::{flatforest::FlatForest, Ptr};
+use crate::collections::{Ptr, flatforest::FlatForest};
 use bitflags::bitflags;
 use std::{cell::RefCell, collections::HashMap, ops::Deref, rc::Rc};
 
@@ -22,18 +22,18 @@ pub enum RichNodeKind {
     Text(TextState),
 }
 impl RichNodeKind {
-    pub fn as_text(&self)->Option<&TextState> {
+    pub fn as_text(&self) -> Option<&TextState> {
         if let Self::Text(state) = self {
             Some(state)
-        }else{
+        } else {
             None
         }
     }
-    
-    pub fn as_text_mut(&mut self)->Option<&mut TextState> {
+
+    pub fn as_text_mut(&mut self) -> Option<&mut TextState> {
         if let Self::Text(state) = self {
             Some(state)
-        }else{
+        } else {
             None
         }
     }
@@ -145,9 +145,9 @@ impl RichOffset {
     pub fn zero() -> Self {
         Self { utf8: 0, utf16: 0 }
     }
-    pub fn offset_by(&mut self,c: char){
+    pub fn offset_by(&mut self, c: char) {
         self.utf8 += c.len_utf8();
-        self.utf16+=c.len_utf16();
+        self.utf16 += c.len_utf16();
     }
 }
 
@@ -171,8 +171,6 @@ impl TextSelectionKind {
 pub struct ExtraTextState {
     pub selection: TextSelectionKind,
 }
-
-impl ExtraTextState {}
 
 #[derive(Clone, PartialEq)]
 pub enum RichAuxData {

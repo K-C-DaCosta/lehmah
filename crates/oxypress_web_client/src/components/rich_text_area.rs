@@ -34,7 +34,8 @@ pub struct TextAreaState {
     document: Ptr<RichTag>,
     focused_node: Ptr<RichTag>,
     ast_selection: RichSelection,
-    pub update_counter: usize,
+    update_counter: usize,
+    document_selection: Option<RichSelection>,
 }
 
 impl TextAreaState {
@@ -90,6 +91,7 @@ impl TextAreaState {
             focused_node: Ptr::null(),
             ast_selection: RichSelection::new(),
             update_counter: 0,
+            document_selection: None,
         }
     }
 
@@ -113,7 +115,7 @@ impl TextAreaState {
         {
             let forest = &mut *self.forest.borrow_mut();
             let forest_content = &mut *self.forest_content.borrow_mut();
-            forest.traverse_all(document, |forest, node| {
+            forest.traverse_all_mut(document, |forest, node| {
                 if let RichNodeKind::Text(_text_state) = forest.get_data(node) {
                     let text_node_state = forest_content
                         .get_mut(&node)
@@ -125,7 +127,86 @@ impl TextAreaState {
             });
         }
     }
+
+    pub fn get_aux_data<F, Out>(&self, ptr: Ptr<RichTag>, cb: F) -> Option<Out>
+    where
+        F: FnOnce(&RichAuxData) -> Out,
+    {
+        self.forest_content.borrow().get(&ptr).map(cb)
+    }
+
+    pub fn get_aux_data_mut<F, Out>(&self, ptr: Ptr<RichTag>, cb: F) -> Option<Out>
+    where
+        F: FnOnce(&mut RichAuxData) -> Out,
+    {
+        self.forest_content.borrow_mut().get_mut(&ptr).map(cb)
+    }
+
+    pub fn forest_content_mut<'a>(&'a self) -> std::cell::RefMut<'a, RichContentTable> {
+        self.forest_content.borrow_mut()
+    }
+
+    pub fn forest_content<'a>(&'a self) -> std::cell::Ref<'a, RichContentTable> {
+        self.forest_content.borrow()
+    }
+    pub fn get_aux_text_state_mut<F, Out>(&self, ptr: Ptr<RichTag>, cb: F) -> Option<Out>
+    where
+        F: FnOnce(&mut ExtraTextState) -> Out,
+    {
+        self.get_aux_data_mut(ptr, |aux_data| aux_data.as_text_mut().map(cb))
+            .flatten()
+    }
+
+    pub fn try_set_text_selection(
+        &self,
+        ptr: Ptr<RichTag>,
+        selection: TextSelectionKind,
+    ) -> Result<(), &'static str> {
+        let mut forest_content = self.forest_content_mut();
+        let data = forest_content
+            .get_mut(&ptr)
+            .ok_or("Pointer not found in table")?;
+        let extra_text_state = data.as_text_mut().ok_or("Node isn't a text node")?;
+        extra_text_state.selection = selection;
+        Ok(())
+    }
+    pub fn try_get_text_selection(
+        &self,
+        ptr: Ptr<RichTag>,
+    ) -> Result<TextSelectionKind, &'static str> {
+        let forest_content = self.forest_content();
+        let data = forest_content
+            .get(&ptr)
+            .ok_or("Pointer not found in table")?;
+        let extra_text_state = data.as_text().ok_or("Node isn't a text node")?;
+        Ok(extra_text_state.selection)
+    }
+
+    pub fn try_get_text_state<F, Out>(&self, ptr: Ptr<RichTag>, f: F) -> Result<Out, &'static str>
+    where
+        F: FnOnce(&TextState) -> Out,
+    {
+        let forest = self.forest.borrow();
+        let node_data = forest.get_data(ptr);
+        let text_state = node_data.as_text().ok_or("Not a text node")?;
+        Ok(f(text_state))
+    }
+
+    pub fn try_get_text_state_mut<F, Out>(
+        &self,
+        ptr: Ptr<RichTag>,
+        f: F,
+    ) -> Result<Out, &'static str>
+    where
+        F: FnOnce(&mut TextState) -> Out,
+    {
+        let mut forest = self.forest.borrow_mut();
+        let node_data = forest.get_data_mut(ptr);
+        let text_state = node_data.as_text_mut().ok_or("Not a text node")?;
+        Ok(f(text_state))
+    }
 }
+
 impl Default for TextAreaState {
     fn default() -> Self {
         Self::new()
@@ -261,8 +342,7 @@ pub fn RichTextArea() -> Html {
                 input.selection_end().ok().flatten().unwrap_or(0) as usize,
             );
             if let Some(text_state) = state
-                .forest_content
-                .borrow_mut()
+                .forest_content_mut()
                 .get_mut(&focused_node)
                 .and_then(RichAuxData::as_text_mut)
             {
@@ -354,19 +434,18 @@ pub fn RichTextArea() -> Html {
                         state = state.set_focused_node(new_text_node);
                         state.flush_overlays();
                         state
-                            .forest_content
-                            .borrow_mut()
-                            .get_mut(&new_text_node)
-                            .and_then(RichAuxData::as_text_mut)
-                            .expect("Failed to fetch text data")
-                            .selection = TextSelectionKind::Caret(RichOffset::zero());
+                            .try_set_text_selection(
+                                new_text_node,
+                                TextSelectionKind::Caret(RichOffset::zero()),
+                            )
+                            .expect("Failed to set text data");
                     }
                     "ArrowLeft" => {
                         let text_state = state
                             .forest_content
-                            .borrow_mut()
-                            .get_mut(&focused_node)
-                            .and_then(RichAuxData::as_text_mut)
+                            .borrow()
+                            .get(&focused_node)
+                            .and_then(RichAuxData::as_text)
                             .cloned()
                             .expect("Failed to get text state");
 
@@ -532,7 +611,7 @@ fn collect_leaf_nodes(
     state
         .forest
         .borrow_mut()
-        .traverse_all(state.document, |f, root| {
+        .traverse_all_mut(state.document, |f, root| {
             let root_kind = f.get_data(root);
             if root_kind.is_text_kind() {
                 leafs.push(root);
@@ -631,7 +710,7 @@ fn RichDisplayNode(p: &RichDisplayNodeProps) -> Html {
                             {
                                 state.selection = TextSelectionKind::Caret(RichOffset::zero());
                             }
-                        } else if let Ok(selection) = compute_text_selection() {
+                        } else if let Ok(selection) = compute_document_selection() {
                             match selection.kind() {
                                 RichSelectionKind::MonoNode(character_range) => {
                                     let node = selection.start_node;
@@ -676,8 +755,102 @@ fn RichDisplayNode(p: &RichDisplayNodeProps) -> Html {
                                             .expect("Failed to set start selection");
                                     }
                                 }
-                                RichSelectionKind::MultiNode => {}
+                                RichSelectionKind::MultiNode => {
+                                    let highlight_start_node = || {
+                                        let end_offset = ta_state
+                                            .try_get_text_state(
+                                                selection.start_node,
+                                                |text_state| {
+                                                    RichOffset::from_utf8_offset(
+                                                        &text_state.content,
+                                                        text_state.content.len(),
+                                                    )
+                                                },
+                                            )
+                                            .expect("Failed to get text state");
+                                        ta_state
+                                            .get_aux_text_state_mut(
+                                                selection.start_node,
+                                                |extra_text_state| {
+                                                    extra_text_state.selection =
+                                                        TextSelectionKind::Range(RichRange {
+                                                            start: selection.start_offset,
+                                                            end: end_offset,
+                                                        });
+                                                },
+                                            )
+                                            .expect("Failed to get aux text state");
+                                    };
+                                    let highligh_end_node = || {
+                                        ta_state.get_aux_text_state_mut(
+                                            selection.end_node,
+                                            |extra_text_state| {
+                                                extra_text_state.selection =
+                                                    TextSelectionKind::Range(RichRange {
+                                                        start: RichOffset::zero(),
+                                                        end: selection.end_offset,
+                                                    });
+                                            },
+                                        )
+                                    };
+                                    let highlight_in_between_start_and_finish = || {
+                                        let start_node = selection.start_node;
+                                        let end_node = selection.end_node;
+
+                                        enum IterState {
+                                            Start,
+                                            Collect,
+                                        }
+                                        let mut iter_state = IterState::Start;
+
+                                        let mut forest_content = ta_state.forest_content_mut();
+
+                                        ta_state.forest.borrow_mut().traverse_all_mut(
+                                            ta_state.document,
+                                            |forest, root| {
+                                                let node_content = forest
+                                                    .get_data(root)
+                                                    .as_text()
+                                                    .map(|state|state.content.as_str())
+                                                    .unwrap_or("");
+
+                                                match iter_state {
+                                                    IterState::Start => {
+                                                        if root == start_node {
+                                                            iter_state = IterState::Collect;
+                                                        }
+                                                        false
+                                                    }
+                                                    IterState::Collect => {
+                                                        if root == end_node {
+                                                            true
+                                                        } else {
+                                                            if let Some(extra_text_state) =
+                                                                forest_content
+                                                                    .get_mut(&root)
+                                                                    .and_then(
+                                                                        RichAuxData::as_text_mut,
+                                                                    )
+                                                            {
+                                                                extra_text_state.selection = TextSelectionKind::Range(RichRange{
+                                                                    start: RichOffset::zero(),
+                                                                    end: RichOffset::from_utf8_offset(node_content, node_content.len()),
+                                                                })
+                                                            }
+
+                                                            false
+                                                        }
+                                                    }
+                                                }
+                                            },
+                                        );
+                                    };
+                                    highlight_start_node();
+                                    highligh_end_node();
+                                    highlight_in_between_start_and_finish();
+                                }
                             }
+                            ta_state.document_selection = Some(selection);
 
                             let _ = input.focus_with_options(&focus_options);
                         }
@@ -768,7 +941,7 @@ fn RichDisplayNode(p: &RichDisplayNodeProps) -> Html {
     }
 }
 
-fn compute_text_selection() -> Result<RichSelection, wasm_bindgen::JsValue> {
+fn compute_document_selection() -> Result<RichSelection, wasm_bindgen::JsValue> {
     let selection = web_sys::window()
         .unwrap()
         .document()
@@ -1010,8 +1183,10 @@ pub fn compute_query_point_from_text_node(
     range
         .set_start(text_node, caret_position.utf16 as u32)
         .expect("Failed to set start range");
-    
-    if caret_is_on_broken_whitespace && let Some(adjacent_char) = text[caret_position.utf8..].chars().nth(1) {
+
+    if caret_is_on_broken_whitespace
+        && let Some(adjacent_char) = text[caret_position.utf8..].chars().nth(1)
+    {
         let mut end = caret_position;
         end.offset_by(adjacent_char);
 
@@ -1023,7 +1198,6 @@ pub fn compute_query_point_from_text_node(
             .set_end(text_node, caret_position.utf16 as u32)
             .expect("Failed to set end range");
     }
-
 
     let mut cur_caret_rect = RichRect::from(&range.get_bounding_client_rect());
 

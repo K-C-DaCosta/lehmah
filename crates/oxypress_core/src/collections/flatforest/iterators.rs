@@ -20,8 +20,7 @@ pub struct FreeBlockElem<'a> {
     pub block_idx: usize,
 }
 
-impl<'a > Iterator for FreedBlocksIter<'a >
-{
+impl<'a> Iterator for FreedBlocksIter<'a> {
     type Item = FreeBlockElem<'a>;
     fn next(&mut self) -> Option<Self::Item> {
         let is_freed = &self.is_freed;

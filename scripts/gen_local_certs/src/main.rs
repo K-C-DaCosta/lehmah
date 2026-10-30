@@ -1,4 +1,4 @@
-use rcgen::{generate_simple_self_signed, CertifiedKey};
+use rcgen::{CertifiedKey, generate_simple_self_signed};
 use std::fs;
 use std::path::Path;
 

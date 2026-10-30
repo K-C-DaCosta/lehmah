@@ -94,7 +94,7 @@ fn populated_blocks_fuzz_test() {
         loggy!(
             ConsoleColors::GREEN,
             "ITERATION PASSED iter_count = [{iter_count}] blocks generated = [{number_of_blocks}] empty_blocks_ratio = {} ",
-            empty_blocks_ratio*100.0
+            empty_blocks_ratio * 100.0
         );
     }
 }

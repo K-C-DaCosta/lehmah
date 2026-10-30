@@ -9,12 +9,11 @@ use crate::components::{
 use bitflags::bitflags;
 use oxypress_core::DomPointer;
 use web_sys::{
-    console,
+    Document, Element, NodeFilter, TreeWalker, console,
     js_sys::{self, Function},
-    wasm_bindgen::{self, prelude::Closure, JsCast, JsValue},
-    Document, Element, NodeFilter, TreeWalker,
+    wasm_bindgen::{self, JsCast, JsValue, prelude::Closure},
 };
-use yew::{prelude::*, Callback, ContextProvider, Properties};
+use yew::{Callback, ContextProvider, Properties, prelude::*};
 
 pub fn console_log(text: String) {
     console::log_1(&JsValue::from_str(&text));
