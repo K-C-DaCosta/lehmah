@@ -19,15 +19,65 @@ use crate::entry_point::console_log;
 
 const ZERO_WIDTH_SPACE: &str = "\u{200B}";
 
+#[derive(Copy, Clone, PartialEq)]
+pub enum ToolKind {
+    Bold,
+    Italics,
+    Underline,
+    Unimplemented,
+}
+
 #[derive(PartialEq, Clone)]
 pub struct ToolState {
     name: AttrValue,
     css_icon: AttrValue,
+    is_selected: bool,
+    kind: ToolKind,
+}
+impl ToolState {
+    pub fn new() -> Self {
+        Self {
+            name: AttrValue::Static(""),
+            css_icon: AttrValue::Static(""),
+            is_selected: false,
+            kind: ToolKind::Unimplemented,
+        }
+    }
+
+    pub fn with_name(mut self, name: &'static str) -> Self {
+        self.name = AttrValue::Static(name);
+        self
+    }
+
+    pub fn with_css_icon(mut self, css_icon: &'static str) -> Self {
+        self.css_icon = AttrValue::Static(css_icon);
+        self
+    }
+
+    pub fn with_tool_kind(mut self, kind: ToolKind) -> Self {
+        self.kind = kind;
+        self
+    }
+
+    pub fn execute(&mut self, ta_state: &TextAreaState) {
+        match self.kind {
+            ToolKind::Bold => {}
+            ToolKind::Underline => {}
+            ToolKind::Italics => {}
+            ToolKind::Unimplemented => {}
+        }
+    }
+}
+
+impl Default for ToolState {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 #[derive(Clone, PartialEq)]
 pub struct TextAreaState {
-    selected_tool: Option<usize>,
+    focused_tool: Option<usize>,
     tools: Vec<ToolState>,
     forest: Rc<RefCell<RichForest>>,
     forest_content: Rc<RefCell<RichContentTable>>,
@@ -66,24 +116,23 @@ impl TextAreaState {
          * */
 
         Self {
-            selected_tool: None,
+            focused_tool: None,
             tools: vec![
-                ToolState {
-                    name: AttrValue::Static("bold-tool"),
-                    css_icon: AttrValue::Static("gg-format-bold"),
-                },
-                ToolState {
-                    name: AttrValue::Static("italics-tool"),
-                    css_icon: AttrValue::Static("gg-format-italic"),
-                },
-                ToolState {
-                    name: AttrValue::Static("underline-tool"),
-                    css_icon: AttrValue::Static("gg-format-underline"),
-                },
-                ToolState {
-                    name: AttrValue::Static("list-tool"),
-                    css_icon: AttrValue::Static("gg-layout-list"),
-                },
+                ToolState::new()
+                    .with_name("bold-tool")
+                    .with_css_icon("gg-format-bold")
+                    .with_tool_kind(ToolKind::Bold),
+                ToolState::new()
+                    .with_name("italics-tool")
+                    .with_css_icon("gg-format-italic")
+                    .with_tool_kind(ToolKind::Italics),
+                ToolState::new()
+                    .with_name("underline-tool")
+                    .with_css_icon("gg-format-underline")
+                    .with_tool_kind(ToolKind::Underline),
+                ToolState::new()
+                    .with_name("list-tool")
+                    .with_css_icon("gg-layout-list"),
             ],
             forest: Rc::new(RefCell::new(forest)),
             forest_content: Rc::new(RefCell::new(forest_content)),
@@ -95,8 +144,8 @@ impl TextAreaState {
         }
     }
 
-    pub fn set_tool(mut self, tool_idx: Option<usize>) -> Self {
-        self.selected_tool = tool_idx;
+    pub fn set_focused_tool(mut self, tool_idx: Option<usize>) -> Self {
+        self.focused_tool = tool_idx;
         self
     }
 
@@ -242,13 +291,15 @@ fn TextAreaTool(p: &TextAreaToolProps) -> Html {
         move |e: web_sys::MouseEvent| {
             e.prevent_default();
             let mut state = parent_state_handler.deref().clone();
-            state = state.set_tool(Some(tool_idx));
+            state = state.set_focused_tool(Some(tool_idx));
             state = state.trigger_update();
+            let tool_state = &mut state.tools[tool_idx];
+            tool_state.is_selected = !tool_state.is_selected;
             parent_state_handler.set(state);
         }
     });
     html! {
-        if p.parent_state.selected_tool.eq(&Some(tool_idx)) {
+        if p.parent_state.tools[tool_idx].is_selected {
             <text-tool {onclick}  class="active-tool">
                 <span class={classes}/>
                 {p.children.clone()}
@@ -760,94 +811,79 @@ fn RichDisplayNode(p: &RichDisplayNodeProps) -> Html {
                                         let end_offset = ta_state
                                             .try_get_text_state(
                                                 selection.start_node,
-                                                |text_state| {
-                                                    RichOffset::from_utf8_offset(
-                                                        &text_state.content,
-                                                        text_state.content.len(),
-                                                    )
-                                                },
+                                                TextState::get_end_offset,
                                             )
                                             .expect("Failed to get text state");
                                         ta_state
                                             .get_aux_text_state_mut(
                                                 selection.start_node,
                                                 |extra_text_state| {
-                                                    extra_text_state.selection =
-                                                        TextSelectionKind::Range(RichRange {
-                                                            start: selection.start_offset,
-                                                            end: end_offset,
-                                                        });
+                                                    extra_text_state
+                                                        .set_range_selection_with_offsets(
+                                                            selection.start_offset,
+                                                            end_offset,
+                                                        )
                                                 },
                                             )
                                             .expect("Failed to get aux text state");
                                     };
                                     let highligh_end_node = || {
-                                        ta_state.get_aux_text_state_mut(
-                                            selection.end_node,
-                                            |extra_text_state| {
-                                                extra_text_state.selection =
-                                                    TextSelectionKind::Range(RichRange {
-                                                        start: RichOffset::zero(),
-                                                        end: selection.end_offset,
-                                                    });
-                                            },
-                                        )
+                                        ta_state
+                                            .get_aux_text_state_mut(
+                                                selection.end_node,
+                                                |extra_text_state| {
+                                                    extra_text_state
+                                                        .set_range_selection_with_offsets(
+                                                            RichOffset::zero(),
+                                                            selection.end_offset,
+                                                        );
+                                                },
+                                            )
+                                            .expect("Failed to get aux text state");
                                     };
                                     let highlight_in_between_start_and_finish = || {
                                         let start_node = selection.start_node;
                                         let end_node = selection.end_node;
-
-                                        enum IterState {
-                                            Start,
-                                            Collect,
-                                        }
-                                        let mut iter_state = IterState::Start;
-
                                         let mut forest_content = ta_state.forest_content_mut();
 
-                                        ta_state.forest.borrow_mut().traverse_all_mut(
-                                            ta_state.document,
-                                            |forest, root| {
-                                                let node_content = forest
-                                                    .get_data(root)
+                                        ta_state
+                                            .forest
+                                            .borrow_mut()
+                                            .iter_exclusive_mut(
+                                                ta_state.document,
+                                                start_node,
+                                                end_node,
+                                            )
+                                            .for_each(|(root, data)| {
+                                                let full_text_range = data
                                                     .as_text()
-                                                    .map(|state|state.content.as_str())
-                                                    .unwrap_or("");
+                                                    .map(TextState::get_full_range)
+                                                    .unwrap_or(RichRange::default());
 
-                                                match iter_state {
-                                                    IterState::Start => {
-                                                        if root == start_node {
-                                                            iter_state = IterState::Collect;
-                                                        }
-                                                        false
-                                                    }
-                                                    IterState::Collect => {
-                                                        if root == end_node {
-                                                            true
-                                                        } else {
-                                                            if let Some(extra_text_state) =
-                                                                forest_content
-                                                                    .get_mut(&root)
-                                                                    .and_then(
-                                                                        RichAuxData::as_text_mut,
-                                                                    )
-                                                            {
-                                                                extra_text_state.selection = TextSelectionKind::Range(RichRange{
-                                                                    start: RichOffset::zero(),
-                                                                    end: RichOffset::from_utf8_offset(node_content, node_content.len()),
-                                                                })
-                                                            }
+                                                // NOTE: DONT SET SELECTIONS FOR EMPTY NODES IT MESSES UP
+                                                // OVERLAY HIGHLIGHTS
+                                                let is_empty_node = data
+                                                    .as_text()
+                                                    .map(|text_state| text_state.content.is_empty())
+                                                    .unwrap_or(false);
 
-                                                            false
-                                                        }
-                                                    }
+                                                if !is_empty_node
+                                                    && let Some(extra_ts) = forest_content
+                                                        .get_mut(&root)
+                                                        .and_then(RichAuxData::as_text_mut)
+                                                {
+                                                    extra_ts.set_range_selection(full_text_range);
                                                 }
-                                            },
-                                        );
+                                            });
                                     };
                                     highlight_start_node();
                                     highligh_end_node();
                                     highlight_in_between_start_and_finish();
+                                    update_toolbar_to_display_common_styles_multinode(
+                                        &mut ta_state,
+                                        &selection,
+                                    );
+                                    ta_state = ta_state.trigger_update();
                                 }
                             }
                             ta_state.document_selection = Some(selection);
@@ -1377,6 +1413,24 @@ fn compute_wrapped_lines_in_text_node(text_node: &web_sys::Node) -> Vec<RichRang
     //flush last line
     wrapped_lines.push(RichRange { start, end });
     wrapped_lines
+}
+pub fn update_toolbar_to_display_common_styles_multinode(
+    ta_state: &mut TextAreaState,
+    selection: &RichSelection,
+) {
+    let common_selected_styling = ta_state
+        .forest
+        .borrow()
+        .iter_inclusive(ta_state.document, selection.start_node, selection.end_node)
+        .filter_map(|(_, data)| data.as_text())
+        .fold(InlineStyling::all(), |acc, e| acc & e.styling);
+
+    for (flag_idx, flag) in InlineStyling::FLAGS.iter().skip(1).enumerate() {
+        if common_selected_styling.contains(*flag.value()) {
+            ta_state.tools[flag_idx].is_selected = true;
+        }
+    }
+    console_log(format!("common styles = {:?}", common_selected_styling));
 }
 
 #[derive(Copy, Clone, PartialEq)]

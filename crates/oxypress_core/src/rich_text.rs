@@ -1,4 +1,4 @@
-use crate::collections::{Ptr, flatforest::FlatForest};
+use crate::collections::{flatforest::FlatForest, Ptr};
 use bitflags::bitflags;
 use std::{cell::RefCell, collections::HashMap, ops::Deref, rc::Rc};
 
@@ -47,6 +47,18 @@ impl RichNodeKind {
 pub struct TextState {
     pub content: String,
     pub styling: InlineStyling,
+}
+impl TextState {
+    pub fn get_end_offset(&self) -> RichOffset {
+        RichOffset::from_utf8_offset(&self.content, self.content.len())
+    }
+
+    pub fn get_full_range(&self) -> RichRange {
+        RichRange {
+            start: RichOffset::zero(),
+            end: self.get_end_offset(),
+        }
+    }
 }
 
 #[derive(Copy, Clone, PartialEq)]
@@ -170,6 +182,14 @@ impl TextSelectionKind {
 #[derive(Clone, PartialEq)]
 pub struct ExtraTextState {
     pub selection: TextSelectionKind,
+}
+impl ExtraTextState {
+    pub fn set_range_selection_with_offsets(&mut self, start: RichOffset, end: RichOffset) {
+        self.selection = TextSelectionKind::Range(RichRange { start, end });
+    }
+    pub fn set_range_selection(&mut self, range:RichRange){
+        self.selection = TextSelectionKind::Range(range);
+    }
 }
 
 #[derive(Clone, PartialEq)]

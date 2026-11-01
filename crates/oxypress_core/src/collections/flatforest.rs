@@ -117,6 +117,173 @@ impl<Tag, T> FlatForest<Tag, T> {
         }
         None
     }
+    fn walk_iter<'a, F, Item>(
+        &'a self,
+        root: Ptr<Tag>,
+        get_item: F,
+    ) -> impl Iterator<Item = (Ptr<Tag>, Item)>
+    where
+        F: Fn(&'a Self, Ptr<Tag>) -> Item,
+    {
+        #[derive(Debug)]
+        struct StackFrame<Tag> {
+            root: Ptr<Tag>,
+            child_idx: usize,
+            len: usize,
+            visited: bool,
+        }
+        impl<Tag> Clone for StackFrame<Tag> {
+            fn clone(&self) -> Self {
+                *self
+            }
+        }
+        impl<Tag> Copy for StackFrame<Tag> {}
+        let mut stack: Vec<StackFrame<Tag>> = vec![StackFrame {
+            root,
+            child_idx: 0,
+            len: self.get_children(root).len(),
+            visited: false,
+        }];
+
+        std::iter::from_fn(move || {
+            while let Some(mut frame) = stack.pop() {
+                let child_idx = frame.child_idx;
+                let visited = frame.visited;
+                if frame.child_idx < frame.len {
+                    frame.child_idx += 1;
+                    frame.visited = true;
+                    stack.push(frame);
+
+                    let children = self.get_children(frame.root);
+                    let next_root = children[child_idx];
+                    let next_len = self.get_children(next_root).len();
+
+                    stack.push(StackFrame {
+                        root: next_root,
+                        child_idx: 0,
+                        len: next_len,
+                        visited: false,
+                    });
+                }
+                if !visited {
+                    let item = get_item(self, frame.root);
+                    return Some((frame.root, item));
+                }
+            }
+            None
+        })
+    }
+    pub fn iter(&self, root: Ptr<Tag>) -> impl Iterator<Item = (Ptr<Tag>, &T)> {
+        self.walk_iter(root, |forest, ptr| forest.get_data(ptr))
+    }
+
+    pub fn iter_mut(&mut self, root: Ptr<Tag>) -> impl Iterator<Item = (Ptr<Tag>, &mut T)> {
+        let self_ptr = self as *mut Self;
+        self.walk_iter(root, move |_, ptr| unsafe { (*self_ptr).get_data_mut(ptr) })
+    }
+    pub fn iter_inclusive(
+        &self,
+        root: Ptr<Tag>,
+        lbound: Ptr<Tag>,
+        ubound: Ptr<Tag>,
+    ) -> impl Iterator<Item = (Ptr<Tag>, &T)> {
+        enum IterState {
+            Start,
+            Collect,
+            Terminate,
+        }
+
+        let mut iter_state = IterState::Start;
+        let mut node_iter = self.iter(root);
+        std::iter::from_fn(move || {
+            #[allow(clippy::while_let_on_iterator)]
+            while let Some((ptr, data)) = node_iter.next() {
+                match iter_state {
+                    IterState::Start => {
+                        if ptr == lbound {
+                            iter_state = IterState::Collect;
+                            return Some((ptr, data));
+                        }
+                    }
+                    IterState::Collect => {
+                        if ptr == ubound {
+                            iter_state = IterState::Terminate;
+                        }
+                        return Some((ptr, data));
+                    }
+                    IterState::Terminate => {
+                        return None;
+                    }
+                }
+            }
+            None
+        })
+    }
+
+    pub fn iter_inclusive_mut(
+        &mut self,
+        root: Ptr<Tag>,
+        lbound: Ptr<Tag>,
+        ubound: Ptr<Tag>,
+    ) -> impl Iterator<Item = (Ptr<Tag>, &mut T)> {
+        let self_ptr = self as *mut Self;
+        self.iter_inclusive(root, lbound, ubound)
+            .map(move |(ptr, _)| unsafe {
+                let self_mut_ref = &mut *self_ptr;
+                let data = self_mut_ref.get_data_mut(ptr);
+                (ptr, data)
+            })
+    }
+
+    pub fn iter_exclusive(
+        &self,
+        root: Ptr<Tag>,
+        lbound: Ptr<Tag>,
+        ubound: Ptr<Tag>,
+    ) -> impl Iterator<Item = (Ptr<Tag>, &T)> {
+        enum IterState {
+            Start,
+            Collect,
+        }
+
+        let mut iter_state = IterState::Start;
+        let mut node_iter = self.iter(root);
+        std::iter::from_fn(move || {
+            #[allow(clippy::while_let_on_iterator)]
+            while let Some((ptr, data)) = node_iter.next() {
+                match iter_state {
+                    IterState::Start => {
+                        if ptr == lbound {
+                            iter_state = IterState::Collect;
+                        }
+                    }
+                    IterState::Collect => {
+                        return if ptr == ubound {
+                            None
+                        } else {
+                            Some((ptr, data))
+                        };
+                    }
+                }
+            }
+            None
+        })
+    }
+
+    pub fn iter_exclusive_mut(
+        &mut self,
+        root: Ptr<Tag>,
+        lbound: Ptr<Tag>,
+        ubound: Ptr<Tag>,
+    ) -> impl Iterator<Item = (Ptr<Tag>, &mut T)> {
+        let self_ptr = self as *mut Self;
+        self.iter_exclusive(root, lbound, ubound)
+            .map(move |(ptr, _)| unsafe {
+                let self_mut_ref = &mut *self_ptr;
+                let data = self_mut_ref.get_data_mut(ptr);
+                (ptr, data)
+            })
+    }
 
     pub fn allocate_node(&mut self, data: T) -> Ptr<Tag> {
         self.update_freed_cache();

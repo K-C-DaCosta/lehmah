@@ -107,6 +107,8 @@ rich-text-area rt-caret::after {
 }
 
 
+
+
 rich-text-area rt-selection {
     background-color: Highlight;
     color: HighlightText;
