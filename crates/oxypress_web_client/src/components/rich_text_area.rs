@@ -1471,9 +1471,7 @@ pub fn update_toolbar_styles(ta_state: &mut TextAreaState, styles: InlineStyling
         .skip(BY_UNSTYLED_FLAG)
         .enumerate()
         .for_each(|(flag_idx, flag)| {
-            if styles.contains(*flag.value()) {
-                ta_state.tools[flag_idx].is_selected = true;
-            }
+            ta_state.tools[flag_idx].is_selected = styles.contains(*flag.value());
         });
 }
 
