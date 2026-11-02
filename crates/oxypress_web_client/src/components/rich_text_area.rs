@@ -59,13 +59,29 @@ impl ToolState {
         self
     }
 
-    pub fn execute(&mut self, ta_state: &TextAreaState) {
+    pub fn execute(&mut self, ta_state: &mut TextAreaState) {
         match self.kind {
-            ToolKind::Bold => {}
+            ToolKind::Bold => {
+                let focused_node = ta_state.focused_node;
+                if focused_node == Ptr::null() {
+                    return;
+                }
+                if let Some(text_state) = ta_state
+                    .forest
+                    .borrow_mut()
+                    .get_data_mut(focused_node)
+                    .as_text_mut()
+                {
+                    text_state.styling ^= InlineStyling::BOLD;
+                }
+            }
             ToolKind::Underline => {}
             ToolKind::Italics => {}
             ToolKind::Unimplemented => {}
         }
+    }
+    pub fn toggle_selection(&mut self) {
+        self.is_selected = !self.is_selected;
     }
 }
 
@@ -254,6 +270,13 @@ impl TextAreaState {
         let text_state = node_data.as_text_mut().ok_or("Not a text node")?;
         Ok(f(text_state))
     }
+
+    pub fn execute_tool_by_idx(&mut self, tool_idx: usize) {
+        let mut old_tool_state = self.tools[tool_idx].clone();
+        old_tool_state.execute(self);
+        //update state with potentially mutated values
+        self.tools[tool_idx] = old_tool_state;
+    }
 }
 
 impl Default for TextAreaState {
@@ -293,8 +316,8 @@ fn TextAreaTool(p: &TextAreaToolProps) -> Html {
             let mut state = parent_state_handler.deref().clone();
             state = state.set_focused_tool(Some(tool_idx));
             state = state.trigger_update();
-            let tool_state = &mut state.tools[tool_idx];
-            tool_state.is_selected = !tool_state.is_selected;
+            state.tools[tool_idx].toggle_selection();
+            state.execute_tool_by_idx(tool_idx);
             parent_state_handler.set(state);
         }
     });
@@ -327,7 +350,7 @@ pub fn RichTextArea() -> Html {
         }
     });
 
-    let oninput = Callback::from({
+    let sync_hidden_input_element_to_rich_ast_oninput = Callback::from({
         let state_handler = state.clone();
         let input_ref = input_ref.clone();
         move |_e: InputEvent| {
@@ -365,13 +388,13 @@ pub fn RichTextArea() -> Html {
                         _ => {}
                     }
                 }
-                console_log("ON_INPUT FIRED!".to_string());
+                console_log("ON_INPUT FIRED!".into());
                 state = state.trigger_update();
             }
             state_handler.set(state);
         }
     });
-    let onselectionchange = Callback::from({
+    let sync_hidden_input_element_to_rich_ast_onselection_change = Callback::from({
         let state_handler = state.clone();
         move |e: Event| {
             console_log("ONSELECTIONCHANGE fired!".into());
@@ -571,8 +594,8 @@ pub fn RichTextArea() -> Html {
                 <input
                     ref={input_ref.clone()}
                     type="text"
-                    {oninput}
-                    {onselectionchange}
+                    oninput={sync_hidden_input_element_to_rich_ast_oninput}
+                    onselectionchange={sync_hidden_input_element_to_rich_ast_onselection_change}
                     {onkeydown}
                 />
 
@@ -750,7 +773,17 @@ fn RichDisplayNode(p: &RichDisplayNodeProps) -> Html {
                             .unwrap_or(false);
 
                         if clicked_text_node_is_empty {
-                            // SKIP SELECTION QUERY
+                            // SKIP `COMPUTE_DOCUMENT_SELECTION(..)`
+                            // Note:
+                            // I'm trying to remember *why* i do this...
+                            // I think its because `compute_document_selection` grabs
+                            // weird nodes, but in order for me to actually confirm i'd need to
+                            // remove this skip-condition and I just kinda wanna move on.
+                            // Note:
+                            // Yeah but im pretty sure im right. As of writing this comment
+                            // an "Empty" node shoudn't have a text node, so when we click on
+                            // the empty `rt-text` node, `compute_document_select(..)` grabs nodes that
+                            // aren't relevant for what this editor is trying to do.
                             let _ = input.focus_with_options(&focus_options);
                             input.set_value("");
                             if let Some(state) = ta_state
@@ -805,6 +838,7 @@ fn RichDisplayNode(p: &RichDisplayNodeProps) -> Html {
                                             ))
                                             .expect("Failed to set start selection");
                                     }
+                                    update_toolbar_styles(&mut ta_state, node_state.styling);
                                 }
                                 RichSelectionKind::MultiNode => {
                                     let highlight_start_node = || {
@@ -1414,6 +1448,7 @@ fn compute_wrapped_lines_in_text_node(text_node: &web_sys::Node) -> Vec<RichRang
     wrapped_lines.push(RichRange { start, end });
     wrapped_lines
 }
+
 pub fn update_toolbar_to_display_common_styles_multinode(
     ta_state: &mut TextAreaState,
     selection: &RichSelection,
@@ -1425,12 +1460,21 @@ pub fn update_toolbar_to_display_common_styles_multinode(
         .filter_map(|(_, data)| data.as_text())
         .fold(InlineStyling::all(), |acc, e| acc & e.styling);
 
-    for (flag_idx, flag) in InlineStyling::FLAGS.iter().skip(1).enumerate() {
-        if common_selected_styling.contains(*flag.value()) {
-            ta_state.tools[flag_idx].is_selected = true;
-        }
-    }
+    update_toolbar_styles(ta_state, common_selected_styling);
     console_log(format!("common styles = {:?}", common_selected_styling));
+}
+
+pub fn update_toolbar_styles(ta_state: &mut TextAreaState, styles: InlineStyling) {
+    const BY_UNSTYLED_FLAG: usize = 1;
+    InlineStyling::FLAGS
+        .iter()
+        .skip(BY_UNSTYLED_FLAG)
+        .enumerate()
+        .for_each(|(flag_idx, flag)| {
+            if styles.contains(*flag.value()) {
+                ta_state.tools[flag_idx].is_selected = true;
+            }
+        });
 }
 
 #[derive(Copy, Clone, PartialEq)]
