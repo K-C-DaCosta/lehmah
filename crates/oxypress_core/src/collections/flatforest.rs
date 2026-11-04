@@ -1,6 +1,7 @@
 use std::{
     mem::MaybeUninit,
     ops::{Deref, DerefMut},
+    ptr::null,
 };
 
 use crate::collections::{
@@ -340,7 +341,23 @@ impl<Tag, T> FlatForest<Tag, T> {
         self.parent[child.to_index()] = root;
     }
 
-    pub fn free(&mut self, root: Ptr<Tag>) {
+    pub fn free(&mut self, root:Ptr<Tag>){
+        let &parent = self.get_parent(root);
+        if !parent.is_null() {
+            let parent_child_list = self.get_children_mut(parent);
+            let root_location = parent_child_list
+                .iter()
+                .copied()
+                .enumerate()
+                .find(|&(_, e)| e == root)
+                .map(|(idx, _)| idx)
+                .expect("Failed to find root in parent");
+            parent_child_list.remove(root_location);
+        }
+        self.free_helper(root);
+    }
+
+    pub fn free_helper(&mut self, root: Ptr<Tag>) {
         if root == Ptr::null() {
             return;
         }
@@ -350,9 +367,10 @@ impl<Tag, T> FlatForest<Tag, T> {
         }
         for k in 0..len {
             let child = self.get_children(root)[k];
-            self.free(child);
+            self.free_helper(child);
         }
     }
+
     pub fn traverse_all_mut<F>(&mut self, root: Ptr<Tag>, mut on_root: F)
     where
         F: FnMut(&mut Self, Ptr<Tag>) -> bool,

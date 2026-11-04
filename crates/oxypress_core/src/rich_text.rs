@@ -1,7 +1,9 @@
 use crate::collections::{flatforest::FlatForest, Ptr};
 use bitflags::bitflags;
-use std::{cell::RefCell, collections::HashMap, ops::Deref, rc::Rc};
+use std::{cell::RefCell, collections::HashMap, ops::Deref, panic::Location, rc::Rc};
 
+
+#[derive(Debug)]
 pub struct RichTag;
 
 bitflags! {
@@ -61,12 +63,18 @@ impl TextState {
     }
 }
 
-#[derive(Copy, Clone, PartialEq)]
+#[derive(Debug, Copy, Clone, PartialEq)]
+pub struct RichSelectionDebugInfo {
+    pub instantiation_point: &'static Location<'static>,
+}
+
+#[derive(Copy, Clone,Debug, PartialEq)]
 pub struct RichSelection {
     pub start_node: Ptr<RichTag>,
     pub end_node: Ptr<RichTag>,
     pub start_offset: RichOffset,
     pub end_offset: RichOffset,
+    pub debug_info: Option<RichSelectionDebugInfo>,
 }
 
 pub enum RichCharacterRangeKind {
@@ -80,12 +88,17 @@ pub enum RichSelectionKind {
 }
 
 impl RichSelection {
-    pub fn new() -> Self {
+    #[track_caller]
+    pub fn mononode(node:Ptr<RichTag>,range:RichRange) -> Self {
+        let location = Location::caller();
         Self {
-            start_node: Ptr::null(),
-            end_node: Ptr::null(),
-            start_offset: RichOffset::default(),
-            end_offset: RichOffset::default(),
+            start_node:node,
+            end_node: node,
+            start_offset: range.start,
+            end_offset: range.end,
+            debug_info: Some(RichSelectionDebugInfo {
+                instantiation_point: location,
+            }),
         }
     }
 
@@ -103,19 +116,13 @@ impl RichSelection {
     }
 }
 
-impl Default for RichSelection {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 #[derive(Copy, Clone, Default, PartialEq)]
 pub struct RichRange {
     pub start: RichOffset,
     pub end: RichOffset,
 }
 
-#[derive(Copy, Clone, Default, PartialEq)]
+#[derive(Copy, Clone, Default, PartialEq,Debug)]
 pub struct RichOffset {
     pub utf8: usize,
     pub utf16: usize,
@@ -177,6 +184,13 @@ impl TextSelectionKind {
             None
         }
     }
+    pub fn as_range(&self) -> Option<RichRange> {
+        if let &Self::Range(range) = self {
+            Some(range)
+        }else{
+            None
+        }
+    }
 }
 
 #[derive(Clone, PartialEq)]
@@ -187,7 +201,7 @@ impl ExtraTextState {
     pub fn set_range_selection_with_offsets(&mut self, start: RichOffset, end: RichOffset) {
         self.selection = TextSelectionKind::Range(RichRange { start, end });
     }
-    pub fn set_range_selection(&mut self, range:RichRange){
+    pub fn set_range_selection(&mut self, range: RichRange) {
         self.selection = TextSelectionKind::Range(range);
     }
 }

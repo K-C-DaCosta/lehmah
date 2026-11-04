@@ -74,9 +74,15 @@ rich-text-area text-input:focus {
 rich-text-area rt-bold {
     font-weight: bold;
 }
+rich-text-area rt-italics {
+    font-style: italic;
+}
+rich-text-area rt-underline {
+    text-decoration: underline;
+}
 
 rich-text-area rt-text {
-    display: block;
+    display: inline;
     /*border: thin solid orange;*/
 }
 @keyframes caretAnimation {
@@ -124,7 +130,7 @@ rich-text-area rt-newline {
 }
 
 rich-text-area .expand_empty {
-    /*display: inline-block;*/
+    display: block;
     /*min-width: 99%;*/
     min-height: 1lh;
     border: thin solid yellow;

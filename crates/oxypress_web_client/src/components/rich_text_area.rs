@@ -1,14 +1,14 @@
 use bitflags::Flags;
 use core::panic;
 use oxypress_core::{
-    collections::Ptr,
+    collections::{flatforest::FlatForest, Ptr},
     rich_text::{
         ExtraTextState, InlineStyling, RichAuxData, RichCharacterRangeKind, RichContentTable,
-        RichForest, RichNodeKind, RichOffset, RichRange, RichSelection, RichSelectionKind, RichTag,
-        TextSelectionKind, TextState,
+        RichForest, RichNodeKind, RichOffset, RichRange, RichSelection, RichSelectionDebugInfo,
+        RichSelectionKind, RichTag, TextSelectionKind, TextState,
     },
 };
-use std::{cell::RefCell, collections::HashMap, ops::Deref, rc::Rc};
+use std::{cell::RefCell, collections::HashMap, ops::Deref, panic::Location, rc::Rc};
 use web_sys::{
     wasm_bindgen::{self, JsCast, JsValue},
     DomRect, FocusOptions, HtmlInputElement, Range,
@@ -26,7 +26,16 @@ pub enum ToolKind {
     Underline,
     Unimplemented,
 }
-
+impl From<ToolKind> for InlineStyling {
+    fn from(value: ToolKind) -> Self {
+        match value {
+            ToolKind::Underline => Self::UNDERLINE,
+            ToolKind::Bold => Self::BOLD,
+            ToolKind::Italics => Self::ITALICS,
+            _ => panic!("Unhandled conversion failed to convert ToolKind"),
+        }
+    }
+}
 #[derive(PartialEq, Clone)]
 pub struct ToolState {
     name: AttrValue,
@@ -59,32 +68,121 @@ impl ToolState {
         self
     }
 
-    pub fn execute(&mut self, ta_state: &mut TextAreaState) {
+    pub fn execute(&mut self, ta_state: &mut TextAreaState) -> Option<()> {
         match self.kind {
-            ToolKind::Bold => {
+            ToolKind::Bold | ToolKind::Italics | ToolKind::Underline => {
+                let selection = ta_state.document_selection?;
                 let focused_node = ta_state.focused_node;
-                if focused_node == Ptr::null() {
-                    return;
-                }
-                if let Some(text_state) = ta_state
-                    .forest
-                    .borrow_mut()
-                    .get_data_mut(focused_node)
-                    .as_text_mut()
-                {
-                    text_state.styling ^= InlineStyling::BOLD;
+                console_log(format!(
+                    "selection = {:?},focused node ={:?}",
+                    selection, focused_node
+                ));
+                match selection.kind() {
+                    RichSelectionKind::MonoNode(RichCharacterRangeKind::MultiCharacter) => {
+                        self.apply_tool_styling_mononode(ta_state, selection);
+                    }
+                    RichSelectionKind::MonoNode(RichCharacterRangeKind::MonoCharacter) => {}
+                    RichSelectionKind::MultiNode => {}
                 }
             }
-            ToolKind::Underline => {}
-            ToolKind::Italics => {}
             ToolKind::Unimplemented => {}
         }
+        None
     }
     pub fn toggle_selection(&mut self) {
         self.is_selected = !self.is_selected;
     }
-}
 
+    fn apply_tool_styling_mononode(&self, ta_state: &mut TextAreaState, selection: RichSelection) {
+        let helpers = ta_state.document_helpers();
+
+        let selected_node = selection.start_node;
+        let selected_node_parent = *ta_state.forest.borrow().get_parent(selected_node);
+        let selected_node_state = ta_state
+            .forest
+            .borrow()
+            .get_data(selected_node)
+            .as_text()
+            .cloned()
+            .expect("Failed to get text state");
+        let selected_content = &selected_node_state.content;
+        let (head, middle, tail) =
+            RichDocumentHelpers::split_content_mono(selected_content, selection);
+
+        let old_styling = selected_node_state.styling;
+        let new_styling = old_styling ^ InlineStyling::from(self.kind);
+
+        ta_state
+            .try_get_text_state_mut(selected_node, |text_state| {
+                text_state.content.clear();
+                text_state.content.push_str(head);
+                text_state.styling = old_styling;
+            })
+            .expect("Failed to get text_state");
+        ta_state.get_aux_data_mut(selected_node, |aux| {
+            if let Some(extra_state) = aux.as_text_mut() {
+                extra_state.selection = TextSelectionKind::Unselected;
+            }
+        });
+
+        let middle_node = helpers.create_text_node(
+            TextState {
+                content: String::from(middle),
+                styling: new_styling,
+            },
+            ExtraTextState {
+                selection: TextSelectionKind::Unselected,
+            },
+        );
+
+        ta_state.forest.borrow_mut().add_child_at(
+            selected_node_parent,
+            middle_node,
+            selected_node,
+            1,
+        );
+        let tail_node = helpers.create_text_node(
+            TextState {
+                content: String::from(tail),
+                styling: old_styling,
+            },
+            ExtraTextState {
+                selection: TextSelectionKind::Unselected,
+            },
+        );
+
+        ta_state
+            .forest
+            .borrow_mut()
+            .add_child_at(selected_node_parent, tail_node, middle_node, 1);
+
+        // some of the text nodes created can be
+        // completely empty and needs to be pruned
+        // from the document
+        let clean_up_list = [
+            (head, selected_node),
+            (middle, middle_node),
+            (tail, tail_node),
+        ];
+
+        clean_up_list
+            .iter()
+            .rev()
+            .copied()
+            .for_each(|(node_content, node_ptr)| {
+                if node_content.is_empty() {
+                    helpers.delete_node(node_ptr);
+                }
+            });
+
+        let children = ta_state
+            .forest
+            .borrow()
+            .get_children(selected_node_parent)
+            .clone();
+        console_log(format!("parent child len = {}", children.len()));
+    }
+}
 impl Default for ToolState {
     fn default() -> Self {
         Self::new()
@@ -99,7 +197,6 @@ pub struct TextAreaState {
     forest_content: Rc<RefCell<RichContentTable>>,
     document: Ptr<RichTag>,
     focused_node: Ptr<RichTag>,
-    ast_selection: RichSelection,
     update_counter: usize,
     document_selection: Option<RichSelection>,
 }
@@ -154,7 +251,6 @@ impl TextAreaState {
             forest_content: Rc::new(RefCell::new(forest_content)),
             document,
             focused_node: Ptr::null(),
-            ast_selection: RichSelection::new(),
             update_counter: 0,
             document_selection: None,
         }
@@ -191,6 +287,10 @@ impl TextAreaState {
                 false
             });
         }
+    }
+
+    pub fn clear_document_selection(&mut self) {
+        self.document_selection = None;
     }
 
     pub fn get_aux_data<F, Out>(&self, ptr: Ptr<RichTag>, cb: F) -> Option<Out>
@@ -276,6 +376,42 @@ impl TextAreaState {
         old_tool_state.execute(self);
         //update state with potentially mutated values
         self.tools[tool_idx] = old_tool_state;
+    }
+
+    pub fn document_helpers(&self) -> RichDocumentHelpers {
+        RichDocumentHelpers {
+            document: self.document,
+            forest: self.forest.clone(),
+            forest_content: self.forest_content.clone(),
+        }
+    }
+}
+
+pub struct RichDocumentHelpers {
+    pub document: Ptr<RichTag>,
+    pub forest: Rc<RefCell<RichForest>>,
+    pub forest_content: Rc<RefCell<RichContentTable>>,
+}
+
+impl RichDocumentHelpers {
+    pub fn create_text_node(&self, state: TextState, extra: ExtraTextState) -> Ptr<RichTag> {
+        let forest = &mut *self.forest.borrow_mut();
+        let forest_content = &mut *self.forest_content.borrow_mut();
+        let ptr = forest.allocate_node(RichNodeKind::Text(state));
+        forest_content.insert(ptr, RichAuxData::Text(extra));
+        ptr
+    }
+    pub fn split_content_mono(content: &str, selection: RichSelection) -> (&str, &str, &str) {
+        let head = &content[0..selection.start_offset.utf8];
+        let selected = &content[selection.start_offset.utf8..selection.end_offset.utf8];
+        let tail = &content[selection.end_offset.utf8..];
+        (head, selected, tail)
+    }
+    pub fn delete_node(&self, ptr: Ptr<RichTag>) {
+        let forest = &mut *self.forest.borrow_mut();
+        let forest_content = &mut *self.forest_content.borrow_mut();
+        forest.free(ptr);
+        forest_content.remove(&ptr);
     }
 }
 
@@ -415,20 +551,37 @@ pub fn RichTextArea() -> Html {
                 &input_text,
                 input.selection_end().ok().flatten().unwrap_or(0) as usize,
             );
-            if let Some(text_state) = state
+            let updated_document_selection = if let Some(text_state) = state
                 .forest_content_mut()
                 .get_mut(&focused_node)
                 .and_then(RichAuxData::as_text_mut)
             {
                 if selection_start == selection_end {
                     text_state.selection = TextSelectionKind::Caret(selection_start);
+                    Some(RichSelection::mononode(
+                        focused_node,
+                        RichRange {
+                            start: selection_start,
+                            end: selection_end,
+                        },
+                    ))
                 } else {
-                    text_state.selection = TextSelectionKind::Range(RichRange {
+                    let range = RichRange {
                         start: selection_start,
                         end: selection_end,
-                    })
+                    };
+                    text_state.selection = TextSelectionKind::Range(range);
+                    Some(RichSelection::mononode(focused_node, range))
                 }
-            }
+            } else {
+                None
+            };
+
+            state.document_selection = updated_document_selection;
+            let focused_node_styling = state
+                .try_get_text_state(focused_node, |text_state| text_state.styling)
+                .expect("Failed to get text state from focused node");
+            update_toolbar_styles(&mut state, focused_node_styling);
             state = state.trigger_update();
             state_handler.set(state);
         }
@@ -1011,6 +1164,7 @@ fn RichDisplayNode(p: &RichDisplayNodeProps) -> Html {
     }
 }
 
+#[track_caller]
 fn compute_document_selection() -> Result<RichSelection, wasm_bindgen::JsValue> {
     let selection = web_sys::window()
         .unwrap()
@@ -1044,11 +1198,15 @@ fn compute_document_selection() -> Result<RichSelection, wasm_bindgen::JsValue> 
     let start_rich_ast = map_dom_node_to_rich_ast(start_dom);
     let end_rich_ast = map_dom_node_to_rich_ast(end_dom);
 
+    let instantiation_point = Location::caller();
     Ok(RichSelection {
         start_node: start_rich_ast,
         end_node: end_rich_ast,
         start_offset,
         end_offset,
+        debug_info: Some(RichSelectionDebugInfo {
+            instantiation_point,
+        }),
     })
 }
 

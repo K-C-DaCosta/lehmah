@@ -10,6 +10,10 @@ pub struct Ptr<Tag> {
     _tag: PhantomData<Tag>,
 }
 impl<Tag> Ptr<Tag> {
+    pub fn is_null(&self)->bool{
+        *self == Ptr::null()
+    }
+
     pub fn null() -> Self {
         Self {
             data: !0,
