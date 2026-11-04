@@ -116,7 +116,7 @@ impl RichSelection {
     }
 }
 
-#[derive(Copy, Clone, Default, PartialEq)]
+#[derive(Copy, Clone, Default, PartialEq,Debug)]
 pub struct RichRange {
     pub start: RichOffset,
     pub end: RichOffset,
@@ -170,7 +170,7 @@ impl RichOffset {
     }
 }
 
-#[derive(Copy, Clone, PartialEq)]
+#[derive(Copy, Clone, PartialEq,Debug)]
 pub enum TextSelectionKind {
     Caret(RichOffset),
     Range(RichRange),

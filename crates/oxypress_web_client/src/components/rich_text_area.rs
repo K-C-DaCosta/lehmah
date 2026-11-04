@@ -79,10 +79,59 @@ impl ToolState {
                 ));
                 match selection.kind() {
                     RichSelectionKind::MonoNode(RichCharacterRangeKind::MultiCharacter) => {
-                        self.apply_tool_styling_mononode(ta_state, selection);
+                        self.apply_tool_styling_mononode(
+                            ta_state,
+                            selection,
+                            styling_ops::toggle_style,
+                        );
                     }
                     RichSelectionKind::MonoNode(RichCharacterRangeKind::MonoCharacter) => {}
-                    RichSelectionKind::MultiNode => {}
+                    RichSelectionKind::MultiNode => {
+                        let common_styles =
+                            compute_common_stylings_in_selection(&ta_state, &selection);
+
+                        let selection_list = ta_state
+                            .forest
+                            .borrow_mut()
+                            .iter_inclusive_mut(
+                                ta_state.document,
+                                selection.start_node,
+                                selection.end_node,
+                            )
+                            .filter(|(_,kind)|  kind.is_text_kind() && kind.as_text().unwrap().content.is_empty() == false)
+                            .map(|(ptr, _)| {
+                                let range = ta_state
+                                    .forest_content()
+                                    .get(&ptr)
+                                    .and_then(|aux_data| aux_data.as_text())
+                                    .and_then(|extra_text_state| {
+                                        console_log(format!("Current selection = {:?}",extra_text_state.selection));
+                                        extra_text_state.selection.as_range()
+                                    })
+                                    .expect(
+                                        format!("Failed to get selection range at ptr={}", ptr)
+                                            .as_str(),
+                                    );
+                                (ptr, range)
+                            })
+                            .collect::<Vec<_>>();
+
+                        for (ptr, range) in selection_list.iter().copied() {
+                            let mononode_selection = RichSelection::mononode(ptr, range);
+                            self.apply_tool_styling_mononode(
+                                ta_state,
+                                mononode_selection,
+                                |tool_state, current_styling| {
+                                    let tool_style = InlineStyling::from(tool_state.kind);
+                                    if common_styles.contains(tool_style) {
+                                        current_styling ^ tool_style
+                                    } else {
+                                        current_styling | tool_style
+                                    }
+                                },
+                            );
+                        }
+                    }
                 }
             }
             ToolKind::Unimplemented => {}
@@ -93,7 +142,14 @@ impl ToolState {
         self.is_selected = !self.is_selected;
     }
 
-    fn apply_tool_styling_mononode(&self, ta_state: &mut TextAreaState, selection: RichSelection) {
+    fn apply_tool_styling_mononode<'a, F>(
+        &'a self,
+        ta_state: &mut TextAreaState,
+        selection: RichSelection,
+        styling_op: F,
+    ) where
+        F: Fn(&'a Self, InlineStyling) -> InlineStyling,
+    {
         let helpers = ta_state.document_helpers();
 
         let selected_node = selection.start_node;
@@ -110,7 +166,7 @@ impl ToolState {
             RichDocumentHelpers::split_content_mono(selected_content, selection);
 
         let old_styling = selected_node_state.styling;
-        let new_styling = old_styling ^ InlineStyling::from(self.kind);
+        let new_styling = styling_op(self, old_styling); //
 
         ta_state
             .try_get_text_state_mut(selected_node, |text_state| {
@@ -183,6 +239,19 @@ impl ToolState {
         console_log(format!("parent child len = {}", children.len()));
     }
 }
+
+pub mod styling_ops {
+    use super::ToolState;
+    use oxypress_core::rich_text::InlineStyling;
+
+    pub fn toggle_style(
+        selected_tool_state: &ToolState,
+        old_styling: InlineStyling,
+    ) -> InlineStyling {
+        old_styling ^ InlineStyling::from(selected_tool_state.kind)
+    }
+}
+
 impl Default for ToolState {
     fn default() -> Self {
         Self::new()
@@ -994,82 +1063,12 @@ fn RichDisplayNode(p: &RichDisplayNodeProps) -> Html {
                                     update_toolbar_styles(&mut ta_state, node_state.styling);
                                 }
                                 RichSelectionKind::MultiNode => {
-                                    let highlight_start_node = || {
-                                        let end_offset = ta_state
-                                            .try_get_text_state(
-                                                selection.start_node,
-                                                TextState::get_end_offset,
-                                            )
-                                            .expect("Failed to get text state");
-                                        ta_state
-                                            .get_aux_text_state_mut(
-                                                selection.start_node,
-                                                |extra_text_state| {
-                                                    extra_text_state
-                                                        .set_range_selection_with_offsets(
-                                                            selection.start_offset,
-                                                            end_offset,
-                                                        )
-                                                },
-                                            )
-                                            .expect("Failed to get aux text state");
-                                    };
-                                    let highligh_end_node = || {
-                                        ta_state
-                                            .get_aux_text_state_mut(
-                                                selection.end_node,
-                                                |extra_text_state| {
-                                                    extra_text_state
-                                                        .set_range_selection_with_offsets(
-                                                            RichOffset::zero(),
-                                                            selection.end_offset,
-                                                        );
-                                                },
-                                            )
-                                            .expect("Failed to get aux text state");
-                                    };
-                                    let highlight_in_between_start_and_finish = || {
-                                        let start_node = selection.start_node;
-                                        let end_node = selection.end_node;
-                                        let mut forest_content = ta_state.forest_content_mut();
-
-                                        ta_state
-                                            .forest
-                                            .borrow_mut()
-                                            .iter_exclusive_mut(
-                                                ta_state.document,
-                                                start_node,
-                                                end_node,
-                                            )
-                                            .for_each(|(root, data)| {
-                                                let full_text_range = data
-                                                    .as_text()
-                                                    .map(TextState::get_full_range)
-                                                    .unwrap_or(RichRange::default());
-
-                                                // NOTE: DONT SET SELECTIONS FOR EMPTY NODES IT MESSES UP
-                                                // OVERLAY HIGHLIGHTS
-                                                let is_empty_node = data
-                                                    .as_text()
-                                                    .map(|text_state| text_state.content.is_empty())
-                                                    .unwrap_or(false);
-
-                                                if !is_empty_node
-                                                    && let Some(extra_ts) = forest_content
-                                                        .get_mut(&root)
-                                                        .and_then(RichAuxData::as_text_mut)
-                                                {
-                                                    extra_ts.set_range_selection(full_text_range);
-                                                }
-                                            });
-                                    };
-                                    highlight_start_node();
-                                    highligh_end_node();
-                                    highlight_in_between_start_and_finish();
+                                    apply_highlights(&ta_state, selection);
                                     update_toolbar_to_display_common_styles_multinode(
                                         &mut ta_state,
                                         &selection,
                                     );
+
                                     ta_state = ta_state.trigger_update();
                                 }
                             }
@@ -1163,7 +1162,61 @@ fn RichDisplayNode(p: &RichDisplayNodeProps) -> Html {
         }
     }
 }
+fn apply_highlights(state: &TextAreaState, selection: RichSelection) {
+    let highlight_start_node = || {
+        let end_offset = state
+            .try_get_text_state(selection.start_node, TextState::get_end_offset)
+            .expect("Failed to get text state");
+        state
+            .get_aux_text_state_mut(selection.start_node, |extra_text_state| {
+                extra_text_state
+                    .set_range_selection_with_offsets(selection.start_offset, end_offset)
+            })
+            .expect("Failed to get aux text state");
+    };
+    let highligh_end_node = || {
+        state
+            .get_aux_text_state_mut(selection.end_node, |extra_text_state| {
+                extra_text_state
+                    .set_range_selection_with_offsets(RichOffset::zero(), selection.end_offset);
+            })
+            .expect("Failed to get aux text state");
+    };
+    let highlight_in_between_start_and_finish = || {
+        let start_node = selection.start_node;
+        let end_node = selection.end_node;
+        let mut forest_content = state.forest_content_mut();
 
+        state
+            .forest
+            .borrow_mut()
+            .iter_exclusive_mut(state.document, start_node, end_node)
+            .for_each(|(root, data)| {
+                let full_text_range = data
+                    .as_text()
+                    .map(TextState::get_full_range)
+                    .unwrap_or(RichRange::default());
+
+                // NOTE: DONT SET SELECTIONS FOR EMPTY NODES IT MESSES UP
+                // OVERLAY HIGHLIGHTS
+                let is_empty_node = data
+                    .as_text()
+                    .map(|text_state| text_state.content.is_empty())
+                    .unwrap_or(false);
+
+                if !is_empty_node
+                    && let Some(extra_ts) = forest_content
+                        .get_mut(&root)
+                        .and_then(RichAuxData::as_text_mut)
+                {
+                    extra_ts.set_range_selection(full_text_range);
+                }
+            });
+    };
+    highlight_start_node();
+    highligh_end_node();
+    highlight_in_between_start_and_finish();
+}
 #[track_caller]
 fn compute_document_selection() -> Result<RichSelection, wasm_bindgen::JsValue> {
     let selection = web_sys::window()
@@ -1611,15 +1664,20 @@ pub fn update_toolbar_to_display_common_styles_multinode(
     ta_state: &mut TextAreaState,
     selection: &RichSelection,
 ) {
-    let common_selected_styling = ta_state
+    let common_selected_styling = compute_common_stylings_in_selection(ta_state, selection);
+    update_toolbar_styles(ta_state, common_selected_styling);
+    console_log(format!("common styles = {:?}", common_selected_styling));
+}
+pub fn compute_common_stylings_in_selection(
+    ta_state: &TextAreaState,
+    selection: &RichSelection,
+) -> InlineStyling {
+    ta_state
         .forest
         .borrow()
         .iter_inclusive(ta_state.document, selection.start_node, selection.end_node)
         .filter_map(|(_, data)| data.as_text())
-        .fold(InlineStyling::all(), |acc, e| acc & e.styling);
-
-    update_toolbar_styles(ta_state, common_selected_styling);
-    console_log(format!("common styles = {:?}", common_selected_styling));
+        .fold(InlineStyling::all(), |acc, e| acc & e.styling)
 }
 
 pub fn update_toolbar_styles(ta_state: &mut TextAreaState, styles: InlineStyling) {
