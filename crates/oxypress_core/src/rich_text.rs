@@ -1,7 +1,9 @@
-use crate::collections::{flatforest::FlatForest, Ptr};
+use crate::{
+    collections::{flatforest::FlatForest, Ptr},
+    rich_text_core::RichKind,
+};
 use bitflags::bitflags;
 use std::{cell::RefCell, collections::HashMap, ops::Deref, panic::Location, rc::Rc};
-
 
 #[derive(Debug)]
 pub struct RichTag;
@@ -68,7 +70,7 @@ pub struct RichSelectionDebugInfo {
     pub instantiation_point: &'static Location<'static>,
 }
 
-#[derive(Copy, Clone,Debug, PartialEq)]
+#[derive(Copy, Clone, Debug, PartialEq)]
 pub struct RichSelection {
     pub start_node: Ptr<RichTag>,
     pub end_node: Ptr<RichTag>,
@@ -89,10 +91,29 @@ pub enum RichSelectionKind {
 
 impl RichSelection {
     #[track_caller]
-    pub fn mononode(node:Ptr<RichTag>,range:RichRange) -> Self {
+    pub fn multinode(
+        start_node: Ptr<RichTag>,
+        end_node: Ptr<RichTag>,
+        start_offset: RichOffset,
+        end_offset: RichOffset,
+    ) -> Self {
         let location = Location::caller();
         Self {
-            start_node:node,
+            start_node,
+            end_node,
+            start_offset,
+            end_offset,
+            debug_info: Some(RichSelectionDebugInfo {
+                instantiation_point: location,
+            }),
+        }
+    }
+
+    #[track_caller]
+    pub fn mononode(node: Ptr<RichTag>, range: RichRange) -> Self {
+        let location = Location::caller();
+        Self {
+            start_node: node,
             end_node: node,
             start_offset: range.start,
             end_offset: range.end,
@@ -116,13 +137,21 @@ impl RichSelection {
     }
 }
 
-#[derive(Copy, Clone, Default, PartialEq,Debug)]
+#[derive(Copy, Clone, Default, PartialEq, Debug)]
 pub struct RichRange {
     pub start: RichOffset,
     pub end: RichOffset,
 }
+impl RichRange {
+    pub fn from_str_unbounded(content: &str) -> Self {
+        Self {
+            start: RichOffset::zero(),
+            end: RichOffset::from_utf8_offset(content, content.len()),
+        }
+    }
+}
 
-#[derive(Copy, Clone, Default, PartialEq,Debug)]
+#[derive(Copy, Clone, Default, PartialEq, Debug)]
 pub struct RichOffset {
     pub utf8: usize,
     pub utf16: usize,
@@ -170,7 +199,7 @@ impl RichOffset {
     }
 }
 
-#[derive(Copy, Clone, PartialEq,Debug)]
+#[derive(Copy, Clone, PartialEq, Debug)]
 pub enum TextSelectionKind {
     Caret(RichOffset),
     Range(RichRange),
@@ -187,7 +216,7 @@ impl TextSelectionKind {
     pub fn as_range(&self) -> Option<RichRange> {
         if let &Self::Range(range) = self {
             Some(range)
-        }else{
+        } else {
             None
         }
     }

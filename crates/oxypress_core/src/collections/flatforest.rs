@@ -341,7 +341,14 @@ impl<Tag, T> FlatForest<Tag, T> {
         self.parent[child.to_index()] = root;
     }
 
-    pub fn free(&mut self, root:Ptr<Tag>){
+    pub fn free(&mut self, root: Ptr<Tag>) {
+        self.free_and_then(root, |_| ());
+    }
+
+    pub fn free_and_then<F>(&mut self, root: Ptr<Tag>, mut after_free: F)
+    where
+        F: FnMut(Ptr<Tag>),
+    {
         let &parent = self.get_parent(root);
         if !parent.is_null() {
             let parent_child_list = self.get_children_mut(parent);
@@ -354,10 +361,13 @@ impl<Tag, T> FlatForest<Tag, T> {
                 .expect("Failed to find root in parent");
             parent_child_list.remove(root_location);
         }
-        self.free_helper(root);
+        self.free_helper(root, &mut after_free);
     }
 
-    pub fn free_helper(&mut self, root: Ptr<Tag>) {
+    fn free_helper<F>(&mut self, root: Ptr<Tag>, after_free: &mut F)
+    where
+        F: FnMut(Ptr<Tag>),
+    {
         if root == Ptr::null() {
             return;
         }
@@ -365,9 +375,10 @@ impl<Tag, T> FlatForest<Tag, T> {
         unsafe {
             self.shallow_free(root);
         }
+        after_free(root);
         for k in 0..len {
             let child = self.get_children(root)[k];
-            self.free_helper(child);
+            self.free_helper(child, after_free);
         }
     }
 

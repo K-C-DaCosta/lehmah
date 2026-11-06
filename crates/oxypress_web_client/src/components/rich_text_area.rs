@@ -1,7 +1,7 @@
 use bitflags::Flags;
 use core::panic;
 use oxypress_core::{
-    collections::{flatforest::FlatForest, Ptr},
+    collections::Ptr,
     rich_text::{
         ExtraTextState, InlineStyling, RichAuxData, RichCharacterRangeKind, RichContentTable,
         RichForest, RichNodeKind, RichOffset, RichRange, RichSelection, RichSelectionDebugInfo,
@@ -11,14 +11,20 @@ use oxypress_core::{
 use std::{cell::RefCell, collections::HashMap, ops::Deref, panic::Location, rc::Rc};
 use web_sys::{
     wasm_bindgen::{self, JsCast, JsValue},
-    DomRect, FocusOptions, HtmlInputElement, Range,
+    FocusOptions, HtmlInputElement, Range,
 };
 use yew::{html::Html, prelude::*};
 
 use crate::entry_point::console_log;
 
+#[allow(unused)]
 const ZERO_WIDTH_SPACE: &str = "\u{200B}";
 
+#[derive(Copy, Clone)]
+pub struct ClippedNodeInfo {
+    node: Ptr<RichTag>,
+    range: RichRange,
+}
 #[derive(Copy, Clone, PartialEq)]
 pub enum ToolKind {
     Bold,
@@ -71,7 +77,7 @@ impl ToolState {
     pub fn execute(&mut self, ta_state: &mut TextAreaState) -> Option<()> {
         match self.kind {
             ToolKind::Bold | ToolKind::Italics | ToolKind::Underline => {
-                let selection = ta_state.document_selection?;
+                let selection = ta_state.document_selection()?;
                 let focused_node = ta_state.focused_node;
                 console_log(format!(
                     "selection = {:?},focused node ={:?}",
@@ -79,16 +85,29 @@ impl ToolState {
                 ));
                 match selection.kind() {
                     RichSelectionKind::MonoNode(RichCharacterRangeKind::MultiCharacter) => {
-                        self.apply_tool_styling_mononode(
+                        let clipped_node = self.apply_tool_styling_mononode(
                             ta_state,
                             selection,
                             styling_ops::toggle_style,
                         );
+                        *ta_state.document_selection_mut() = Some(RichSelection::mononode(
+                            clipped_node.node,
+                            clipped_node.range,
+                        ));
+
+                        self.toggle_selection();
                     }
-                    RichSelectionKind::MonoNode(RichCharacterRangeKind::MonoCharacter) => {}
+                    RichSelectionKind::MonoNode(RichCharacterRangeKind::MonoCharacter) => {
+                        console_log("MONOCHARACTER NOT IMPLEMENTED".into());
+                    }
                     RichSelectionKind::MultiNode => {
                         let common_styles =
-                            compute_common_stylings_in_selection(&ta_state, &selection);
+                            compute_common_stylings_in_selection(ta_state, &selection);
+
+                        let keep_non_empty_text_nodes =
+                            |(_, kind): &(Ptr<RichTag>, &mut RichNodeKind)| {
+                                kind.is_text_kind() && !kind.as_text().unwrap().content.is_empty()
+                            };
 
                         let selection_list = ta_state
                             .forest
@@ -98,39 +117,68 @@ impl ToolState {
                                 selection.start_node,
                                 selection.end_node,
                             )
-                            .filter(|(_,kind)|  kind.is_text_kind() && kind.as_text().unwrap().content.is_empty() == false)
+                            .filter(keep_non_empty_text_nodes)
                             .map(|(ptr, _)| {
                                 let range = ta_state
                                     .forest_content()
                                     .get(&ptr)
                                     .and_then(|aux_data| aux_data.as_text())
                                     .and_then(|extra_text_state| {
-                                        console_log(format!("Current selection = {:?}",extra_text_state.selection));
+                                        console_log(format!(
+                                            "Current selection = {:?}",
+                                            extra_text_state.selection
+                                        ));
                                         extra_text_state.selection.as_range()
                                     })
-                                    .expect(
-                                        format!("Failed to get selection range at ptr={}", ptr)
-                                            .as_str(),
-                                    );
+                                    .unwrap_or_else(|| {
+                                        panic!("Failed to get selection range at ptr={}", ptr)
+                                    });
                                 (ptr, range)
                             })
                             .collect::<Vec<_>>();
-
-                        for (ptr, range) in selection_list.iter().copied() {
-                            let mononode_selection = RichSelection::mononode(ptr, range);
-                            self.apply_tool_styling_mononode(
-                                ta_state,
-                                mononode_selection,
-                                |tool_state, current_styling| {
-                                    let tool_style = InlineStyling::from(tool_state.kind);
-                                    if common_styles.contains(tool_style) {
-                                        current_styling ^ tool_style
-                                    } else {
-                                        current_styling | tool_style
-                                    }
-                                },
-                            );
+                        let clipped_list = selection_list
+                            .iter()
+                            .copied()
+                            .map(|(ptr, range)| {
+                                let mononode_selection = RichSelection::mononode(ptr, range);
+                                self.apply_tool_styling_mononode(
+                                    ta_state,
+                                    mononode_selection,
+                                    |tool_state, current_styling| {
+                                        let tool_style = InlineStyling::from(tool_state.kind);
+                                        if common_styles.contains(tool_style) {
+                                            current_styling ^ tool_style
+                                        } else {
+                                            current_styling | tool_style
+                                        }
+                                    },
+                                )
+                            })
+                            .collect::<Vec<_>>();
+                        for clipped_node in clipped_list.iter() {
+                            ta_state
+                                .forest_content_mut()
+                                .get_mut(&clipped_node.node)
+                                .and_then(RichAuxData::as_text_mut)
+                                .expect("Failed to get aux text data")
+                                .selection = TextSelectionKind::Range(clipped_node.range);
                         }
+                        let start_clipped = clipped_list
+                            .first()
+                            .copied()
+                            .expect("Failed to get first clipped node");
+                        let end_clipped = clipped_list
+                            .last()
+                            .copied()
+                            .expect("Failed to get last clipped node");
+                        let new_selection = RichSelection::multinode(
+                            start_clipped.node,
+                            end_clipped.node,
+                            RichOffset::zero(),
+                            end_clipped.range.end,
+                        );
+                        *ta_state.document_selection_mut() = Some(new_selection);
+                        self.toggle_selection();
                     }
                 }
             }
@@ -147,7 +195,8 @@ impl ToolState {
         ta_state: &mut TextAreaState,
         selection: RichSelection,
         styling_op: F,
-    ) where
+    ) -> ClippedNodeInfo
+    where
         F: Fn(&'a Self, InlineStyling) -> InlineStyling,
     {
         let helpers = ta_state.document_helpers();
@@ -237,6 +286,10 @@ impl ToolState {
             .get_children(selected_node_parent)
             .clone();
         console_log(format!("parent child len = {}", children.len()));
+        ClippedNodeInfo {
+            node: middle_node,
+            range: RichRange::from_str_unbounded(middle),
+        }
     }
 }
 
@@ -454,6 +507,14 @@ impl TextAreaState {
             forest_content: self.forest_content.clone(),
         }
     }
+
+    pub fn document_selection(&self) -> Option<RichSelection> {
+        self.document_selection
+    }
+
+    pub fn document_selection_mut(&mut self) -> &mut Option<RichSelection> {
+        &mut self.document_selection
+    }
 }
 
 pub struct RichDocumentHelpers {
@@ -476,11 +537,12 @@ impl RichDocumentHelpers {
         let tail = &content[selection.end_offset.utf8..];
         (head, selected, tail)
     }
-    pub fn delete_node(&self, ptr: Ptr<RichTag>) {
+    pub fn delete_node(&self, root: Ptr<RichTag>) {
         let forest = &mut *self.forest.borrow_mut();
         let forest_content = &mut *self.forest_content.borrow_mut();
-        forest.free(ptr);
-        forest_content.remove(&ptr);
+        forest.free_and_then(root, |ptr| {
+            forest_content.remove(&ptr);
+        });
     }
 }
 
@@ -514,26 +576,25 @@ fn TextAreaTool(p: &TextAreaToolProps) -> Html {
         acc
     });
     let tool_idx = p.tool_idx;
-    let onclick = Callback::from({
+    let tool_onclick = Callback::from({
         let parent_state_handler = p.parent_state.clone();
         move |e: web_sys::MouseEvent| {
             e.prevent_default();
             let mut state = parent_state_handler.deref().clone();
             state = state.set_focused_tool(Some(tool_idx));
             state = state.trigger_update();
-            state.tools[tool_idx].toggle_selection();
             state.execute_tool_by_idx(tool_idx);
             parent_state_handler.set(state);
         }
     });
     html! {
         if p.parent_state.tools[tool_idx].is_selected {
-            <text-tool {onclick}  class="active-tool">
+            <text-tool onclick={tool_onclick}  class="active-tool">
                 <span class={classes}/>
                 {p.children.clone()}
             </text-tool>
         }else{
-           <text-tool {onclick}>
+           <text-tool onclick={tool_onclick}>
                 <span class={classes}/>
                 {p.children.clone()}
             </text-tool>
@@ -646,7 +707,7 @@ pub fn RichTextArea() -> Html {
                 None
             };
 
-            state.document_selection = updated_document_selection;
+            *state.document_selection_mut() = updated_document_selection;
             let focused_node_styling = state
                 .try_get_text_state(focused_node, |text_state| text_state.styling)
                 .expect("Failed to get text state from focused node");
@@ -966,10 +1027,13 @@ fn RichDisplayNode(p: &RichDisplayNodeProps) -> Html {
             styling: root_styling,
             ..
         }) => {
-            let clear_overlays = {
-                let ta_state = ta_state.clone();
+            let clear_stale_overlays_and_state = {
+                let ta_state_handle = ta_state.clone();
                 Callback::from(move |_e: MouseEvent| {
-                    ta_state.deref().flush_overlays();
+                    let mut ta_state = ta_state_handle.deref().clone();
+                    ta_state.flush_overlays();
+                    *ta_state.document_selection_mut() = None;
+                    ta_state_handle.set(ta_state);
                 })
             };
 
@@ -1102,7 +1166,7 @@ fn RichDisplayNode(p: &RichDisplayNodeProps) -> Html {
                         <>
                             <rt-text
                                 data-ast-id={root.to_string()}
-                                onmousedown={clear_overlays.clone()}
+                                onmousedown={clear_stale_overlays_and_state.clone()}
                                 onmouseup={hand_over_control_to_hidden_input.clone()}
                                 class={aux_classes.clone()}
                             >
