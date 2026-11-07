@@ -111,7 +111,7 @@ where
             state.set(TabbedFrameState {
                 active_tab_idx: new_idx,
             });*/
-            console_log("Onwhell stubbed".into());
+            console_log("OnWheel Stubbed!".into());
         }
     });
     let active_tab_content = p

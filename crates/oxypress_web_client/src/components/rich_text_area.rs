@@ -74,7 +74,7 @@ impl ToolState {
         self
     }
 
-    pub fn execute(&mut self, ta_state: &mut TextAreaState) -> Option<()> {
+    pub fn execute(&mut self, ta_state: &mut TextAreaState, tool_idx: usize) -> Option<()> {
         match self.kind {
             ToolKind::Bold | ToolKind::Italics | ToolKind::Underline => {
                 let selection = ta_state.document_selection()?;
@@ -94,6 +94,10 @@ impl ToolState {
                             clipped_node.node,
                             clipped_node.range,
                         ));
+                        ta_state.get_aux_text_state_mut(clipped_node.node, |extra_text_state| {
+                            extra_text_state.selection =
+                                TextSelectionKind::Range(clipped_node.range)
+                        });
 
                         self.toggle_selection();
                     }
@@ -109,6 +113,17 @@ impl ToolState {
                                 kind.is_text_kind() && !kind.as_text().unwrap().content.is_empty()
                             };
 
+                        // NOTE: SOMETIMES `compute_document_selection(..)` have `start` and `end`
+                        // ranges that select NO text in that range. `apply_tool_styling_mononode(..)`
+                        // doesn't expect ranges with zero text actually being selected
+                        let keep_non_empty_ranges =
+                            |(_ptr, range, data): &(Ptr<RichTag>, RichRange, &mut RichNodeKind)| {
+                                let text_state = data.as_text().expect("Failed to get text_state");
+                                let selected_content =
+                                    &text_state.content[range.start.utf8..range.end.utf8];
+                                !selected_content.is_empty()
+                            };
+
                         let selection_list = ta_state
                             .forest
                             .borrow_mut()
@@ -118,7 +133,7 @@ impl ToolState {
                                 selection.end_node,
                             )
                             .filter(keep_non_empty_text_nodes)
-                            .map(|(ptr, _)| {
+                            .map(|(ptr, data)| {
                                 let range = ta_state
                                     .forest_content()
                                     .get(&ptr)
@@ -133,8 +148,10 @@ impl ToolState {
                                     .unwrap_or_else(|| {
                                         panic!("Failed to get selection range at ptr={}", ptr)
                                     });
-                                (ptr, range)
+                                (ptr, range, data)
                             })
+                            .filter(keep_non_empty_ranges)
+                            .map(|(ptr, range, _)| (ptr, range))
                             .collect::<Vec<_>>();
                         let clipped_list = selection_list
                             .iter()
@@ -178,7 +195,16 @@ impl ToolState {
                             end_clipped.range.end,
                         );
                         *ta_state.document_selection_mut() = Some(new_selection);
-                        self.toggle_selection();
+
+                        update_toolbar_styles(
+                            ta_state,
+                            compute_common_stylings_in_selection(ta_state, &new_selection),
+                        );
+
+                        let mut sync_global_state_with_local_state = || {
+                            *self = ta_state.tools[tool_idx].clone();
+                        };
+                        sync_global_state_with_local_state();
                     }
                 }
             }
@@ -277,15 +303,22 @@ impl ToolState {
             .for_each(|(node_content, node_ptr)| {
                 if node_content.is_empty() {
                     helpers.delete_node(node_ptr);
+                    if node_ptr == middle_node {
+                        console_log("WARNING MIDDLE NODE IS BEING DELETED!!!".into());
+                        console_log(format!("selected content = \'{selected_content}\'"));
+                        console_log(format!(
+                            "head = \'{head}\' middle = \'{middle}\' tail =\'{tail}\'"
+                        ));
+                    }
                 }
             });
 
-        let children = ta_state
+        /*let children = ta_state
             .forest
             .borrow()
             .get_children(selected_node_parent)
             .clone();
-        console_log(format!("parent child len = {}", children.len()));
+        console_log(format!("parent child len = {}", children.len()));*/
         ClippedNodeInfo {
             node: middle_node,
             range: RichRange::from_str_unbounded(middle),
@@ -383,9 +416,8 @@ impl TextAreaState {
         self
     }
 
-    pub fn trigger_update(mut self) -> Self {
+    pub fn trigger_update(&mut self) {
         self.update_counter += 1;
-        self
     }
 
     pub fn set_focused_node(mut self, node: Ptr<RichTag>) -> Self {
@@ -412,7 +444,7 @@ impl TextAreaState {
     }
 
     pub fn clear_document_selection(&mut self) {
-        self.document_selection = None;
+        *self.document_selection_mut() = None;
     }
 
     pub fn get_aux_data<F, Out>(&self, ptr: Ptr<RichTag>, cb: F) -> Option<Out>
@@ -494,10 +526,10 @@ impl TextAreaState {
     }
 
     pub fn execute_tool_by_idx(&mut self, tool_idx: usize) {
-        let mut old_tool_state = self.tools[tool_idx].clone();
-        old_tool_state.execute(self);
+        let mut local_tool_state = self.tools[tool_idx].clone();
+        local_tool_state.execute(self, tool_idx);
         //update state with potentially mutated values
-        self.tools[tool_idx] = old_tool_state;
+        self.tools[tool_idx] = local_tool_state;
     }
 
     pub fn document_helpers(&self) -> RichDocumentHelpers {
@@ -512,7 +544,10 @@ impl TextAreaState {
         self.document_selection
     }
 
+    #[track_caller]
     pub fn document_selection_mut(&mut self) -> &mut Option<RichSelection> {
+        let location = Location::caller();
+        console_log(format!("selection last mutated from ={}", location));
         &mut self.document_selection
     }
 }
@@ -582,8 +617,8 @@ fn TextAreaTool(p: &TextAreaToolProps) -> Html {
             e.prevent_default();
             let mut state = parent_state_handler.deref().clone();
             state = state.set_focused_tool(Some(tool_idx));
-            state = state.trigger_update();
             state.execute_tool_by_idx(tool_idx);
+            state.trigger_update();
             parent_state_handler.set(state);
         }
     });
@@ -655,7 +690,7 @@ pub fn RichTextArea() -> Html {
                     }
                 }
                 console_log("ON_INPUT FIRED!".into());
-                state = state.trigger_update();
+                state.trigger_update();
             }
             state_handler.set(state);
         }
@@ -712,7 +747,7 @@ pub fn RichTextArea() -> Html {
                 .try_get_text_state(focused_node, |text_state| text_state.styling)
                 .expect("Failed to get text state from focused node");
             update_toolbar_styles(&mut state, focused_node_styling);
-            state = state.trigger_update();
+            state.trigger_update();
             state_handler.set(state);
         }
     });
@@ -865,7 +900,7 @@ pub fn RichTextArea() -> Html {
                 }
             }
 
-            state = state.trigger_update();
+            state.trigger_update();
 
             state_handler.set(state);
         }
@@ -1132,11 +1167,10 @@ fn RichDisplayNode(p: &RichDisplayNodeProps) -> Html {
                                         &mut ta_state,
                                         &selection,
                                     );
-
-                                    ta_state = ta_state.trigger_update();
+                                    ta_state.trigger_update();
                                 }
                             }
-                            ta_state.document_selection = Some(selection);
+                            *ta_state.document_selection_mut() = Some(selection);
 
                             let _ = input.focus_with_options(&focus_options);
                         }
@@ -1732,15 +1766,30 @@ pub fn update_toolbar_to_display_common_styles_multinode(
     update_toolbar_styles(ta_state, common_selected_styling);
     console_log(format!("common styles = {:?}", common_selected_styling));
 }
+
 pub fn compute_common_stylings_in_selection(
     ta_state: &TextAreaState,
     selection: &RichSelection,
 ) -> InlineStyling {
+
+    fn filter_out_non_text_nodes_they_dont_matter(
+        (_ptr, data_kind): (Ptr<RichTag>, &RichNodeKind),
+    ) -> Option<&TextState> {
+        data_kind.as_text()
+    }
+
+    fn filter_out_empty_nodes_the_styling_shouldnt_contribute_to_the_accumulator(
+        text_state: &&TextState,
+    ) -> bool {
+        !text_state.content.is_empty()
+    }
+
     ta_state
         .forest
         .borrow()
         .iter_inclusive(ta_state.document, selection.start_node, selection.end_node)
-        .filter_map(|(_, data)| data.as_text())
+        .filter_map(filter_out_non_text_nodes_they_dont_matter)
+        .filter(filter_out_empty_nodes_the_styling_shouldnt_contribute_to_the_accumulator)
         .fold(InlineStyling::all(), |acc, e| acc & e.styling)
 }
 
