@@ -126,3 +126,24 @@ impl<T> HasLen for Vec<T> {
         self.len()
     }
 }
+
+impl<M> Clone for RingBuffer<M>
+where
+    M: Clone,
+{
+    fn clone(&self) -> Self {
+        Self {
+            memory: self.memory.clone(),
+            rear: self.rear,
+            front: self.front,
+            len: self.len,
+        }
+    }
+}
+impl <M> PartialEq for RingBuffer<M>
+    where M:PartialEq
+{
+    fn eq(&self, other: &Self) -> bool {
+        self.memory == other.memory && self.len == other.len && self.front ==  other.front && self.rear == other.rear
+    }
+}

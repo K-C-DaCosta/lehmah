@@ -1,7 +1,7 @@
 use bitflags::Flags;
 use core::panic;
 use oxypress_core::{
-    collections::Ptr,
+    collections::{ringbuffer::RingBuffer, Ptr},
     rich_text::{
         ExtraTextState, InlineStyling, RichAuxData, RichCharacterRangeKind, RichContentTable,
         RichForest, RichNodeKind, RichOffset, RichRange, RichSelection, RichSelectionDebugInfo,
@@ -74,7 +74,12 @@ impl ToolState {
         self
     }
 
-    pub fn execute(&mut self, ta_state: &mut TextAreaState, tool_idx: usize) -> Option<()> {
+    pub fn execute(
+        &mut self,
+        ta_state: &mut TextAreaState,
+        tool_idx: usize,
+        input_ref: &NodeRef,
+    ) -> Option<()> {
         match self.kind {
             ToolKind::Bold | ToolKind::Italics | ToolKind::Underline => {
                 let selection = ta_state.document_selection()?;
@@ -102,7 +107,30 @@ impl ToolState {
                         self.toggle_selection();
                     }
                     RichSelectionKind::MonoNode(RichCharacterRangeKind::MonoCharacter) => {
-                        console_log("MONOCHARACTER NOT IMPLEMENTED".into());
+                        let focused_styling = ta_state
+                            .try_get_text_state(focused_node, |text_state| text_state.styling)
+                            .expect("Failed to get text styling");
+                        ta_state
+                            .deferred_tasks
+                            .enqueue(DeferredDocumentTask::with_kind(
+                                DeferredDocumentTaskKind::InsertNodeAt {
+                                    node: selection.start_node,
+                                    offset: selection.start_offset,
+                                    dst_style: focused_styling ^ InlineStyling::from(self.kind),
+                                },
+                            ))
+                            .expect("Failed to enqueue task");
+                        self.toggle_selection();
+                        let hidden_input_element = input_ref
+                            .cast::<HtmlInputElement>()
+                            .expect("Failed to get hidden input element");
+
+                        let focus_options = web_sys::FocusOptions::new();
+                        focus_options.set_prevent_scroll(true);
+                        focus_options.set_focus_visible(true);
+                        hidden_input_element
+                            .focus_with_options(&focus_options)
+                            .expect("Failed to focus to hidden input");
                     }
                     RichSelectionKind::MultiNode => {
                         let common_styles =
@@ -345,6 +373,32 @@ impl Default for ToolState {
 }
 
 #[derive(Clone, PartialEq)]
+pub struct DeferredDocumentTask {
+    created_at: panic::Location<'static>,
+    task_kind: DeferredDocumentTaskKind,
+}
+impl DeferredDocumentTask {
+    #[track_caller]
+    pub fn with_kind(kind: DeferredDocumentTaskKind) -> Self {
+        let location = Location::caller();
+        Self {
+            created_at: location.clone(),
+            task_kind: kind,
+        }
+    }
+}
+
+#[derive(Clone, PartialEq)]
+pub enum DeferredDocumentTaskKind {
+    InsertNodeAt {
+        node: Ptr<RichTag>,
+        offset: RichOffset,
+        dst_style: InlineStyling,
+    },
+    NOP,
+}
+
+#[derive(Clone, PartialEq)]
 pub struct TextAreaState {
     focused_tool: Option<usize>,
     tools: Vec<ToolState>,
@@ -354,6 +408,7 @@ pub struct TextAreaState {
     focused_node: Ptr<RichTag>,
     update_counter: usize,
     document_selection: Option<RichSelection>,
+    deferred_tasks: RingBuffer<[DeferredDocumentTask; 16]>,
 }
 
 impl TextAreaState {
@@ -408,8 +463,14 @@ impl TextAreaState {
             focused_node: Ptr::null(),
             update_counter: 0,
             document_selection: None,
+            deferred_tasks: RingBuffer::with_backing(std::array::from_fn(|_| {
+                DeferredDocumentTask::with_kind(DeferredDocumentTaskKind::NOP)
+            })),
         }
     }
+
+    #[track_caller]
+    pub fn enqueue_task(&mut self) {}
 
     pub fn set_focused_tool(mut self, tool_idx: Option<usize>) -> Self {
         self.focused_tool = tool_idx;
@@ -525,9 +586,9 @@ impl TextAreaState {
         Ok(f(text_state))
     }
 
-    pub fn execute_tool_by_idx(&mut self, tool_idx: usize) {
+    pub fn execute_tool_by_idx(&mut self, tool_idx: usize, input_ref: &NodeRef) {
         let mut local_tool_state = self.tools[tool_idx].clone();
-        local_tool_state.execute(self, tool_idx);
+        local_tool_state.execute(self, tool_idx, input_ref);
         //update state with potentially mutated values
         self.tools[tool_idx] = local_tool_state;
     }
@@ -591,6 +652,7 @@ impl Default for TextAreaState {
 struct TextAreaToolProps {
     tool_idx: usize,
     tool_info: ToolState,
+    input_ref: NodeRef,
     parent_state: UseStateHandle<TextAreaState>,
     #[prop_or_default]
     children: Html,
@@ -611,13 +673,14 @@ fn TextAreaTool(p: &TextAreaToolProps) -> Html {
         acc
     });
     let tool_idx = p.tool_idx;
+    let input_ref = p.input_ref.clone();
     let tool_onclick = Callback::from({
         let parent_state_handler = p.parent_state.clone();
         move |e: web_sys::MouseEvent| {
             e.prevent_default();
             let mut state = parent_state_handler.deref().clone();
             state = state.set_focused_tool(Some(tool_idx));
-            state.execute_tool_by_idx(tool_idx);
+            state.execute_tool_by_idx(tool_idx, &input_ref);
             state.trigger_update();
             parent_state_handler.set(state);
         }
@@ -644,9 +707,15 @@ pub fn RichTextArea() -> Html {
 
     let tool_iter = state.tools.clone().into_iter().enumerate().map({
         let state = state.clone();
+        let input_ref = input_ref.clone();
         move |(idx, tool_ctx)| {
             html! {
-                <TextAreaTool parent_state={state.clone()} tool_idx={idx} tool_info={tool_ctx}/>
+                <TextAreaTool
+                    parent_state={state.clone()}
+                    tool_idx={idx}
+                    tool_info={tool_ctx}
+                    input_ref={input_ref.clone()}
+                />
             }
         }
     });
@@ -903,6 +972,114 @@ pub fn RichTextArea() -> Html {
             state.trigger_update();
 
             state_handler.set(state);
+        }
+    });
+    let process_deferred_tasks = {
+        let ta_state_handler = state.clone();
+        Callback::from(move |event: web_sys::InputEvent| {
+            let mut ta_state = ta_state_handler.deref().clone();
+
+            console_log("ON BEFORE INPUT IS BEING FIRED".into());
+            console_log(format!("data = \'{}\'", event.data().unwrap_or_default()));
+            let incoming_text = event.data().unwrap_or_default();
+            let helpers = ta_state.document_helpers();
+            let hidden_input_element = event
+                .target()
+                .expect("Failed to get target")
+                .dyn_into::<HtmlInputElement>()
+                .expect("Failed to cast to Input Element");
+
+            match ta_state.deferred_tasks.dequeue() {
+                Ok(task) => match task.task_kind {
+                    DeferredDocumentTaskKind::InsertNodeAt {
+                        node: head_node,
+                        offset,
+                        dst_style: destination_style,
+                    } => {
+                        event.prevent_default();
+
+                        let node_state = ta_state
+                            .try_get_text_state(head_node, |text_state| text_state.clone())
+                            .expect("Failed to get styling");
+                        let head = &node_state.content[0..offset.utf8];
+                        let tail = &node_state.content[offset.utf8..];
+
+                        ta_state
+                            .try_get_text_state_mut(head_node, |text_state| {
+                                text_state.content.clear();
+                                text_state.content.push_str(head);
+                            })
+                            .expect("Failed to mutate TextState");
+                        ta_state.get_aux_text_state_mut(head_node, |extra_text_state| {
+                            extra_text_state.selection = TextSelectionKind::Unselected
+                        });
+
+                        let incoming_node = helpers.create_text_node(
+                            TextState {
+                                content: incoming_text.clone(),
+                                styling: destination_style,
+                            },
+                            ExtraTextState {
+                                selection: TextSelectionKind::Unselected,
+                            },
+                        );
+
+                        let tail_node = helpers.create_text_node(
+                            TextState {
+                                content: tail.into(),
+                                styling: node_state.styling,
+                            },
+                            ExtraTextState {
+                                selection: TextSelectionKind::Unselected,
+                            },
+                        );
+
+                        ta_state.forest.borrow_mut().add_child_at(
+                            ta_state.document,
+                            incoming_node,
+                            head_node,
+                            1,
+                        );
+                        ta_state.forest.borrow_mut().add_child_at(
+                            ta_state.document,
+                            tail_node,
+                            incoming_node,
+                            1,
+                        );
+
+                        hidden_input_element.set_value(incoming_text.as_str());
+
+                        ta_state = ta_state.set_focused_node(incoming_node);
+                    }
+                    DeferredDocumentTaskKind::NOP => {}
+                },
+                Err(e) => {}
+            }
+
+            ta_state_handler.set(ta_state);
+        })
+    };
+
+    use_effect_with(input_ref.clone(), {
+        let input_ref = input_ref.clone();
+        move |_| {
+            let input_elem = input_ref
+                .cast::<HtmlInputElement>()
+                .expect("Failed to cast to HtmlInputElement");
+            let closure = wasm_bindgen::closure::Closure::<dyn Fn(_)>::wrap(Box::new(
+                move |e: web_sys::InputEvent| process_deferred_tasks.emit(e),
+            ));
+            let _ = input_elem
+                .add_event_listener_with_callback("beforeinput", closure.as_ref().unchecked_ref());
+
+            // CLEANS UP CLOSURE ON DROP
+            move || {
+                let _ = input_elem.remove_event_listener_with_callback(
+                    "beforeinput",
+                    closure.as_ref().unchecked_ref(),
+                );
+                std::mem::drop(closure)
+            }
         }
     });
 
@@ -1771,7 +1948,6 @@ pub fn compute_common_stylings_in_selection(
     ta_state: &TextAreaState,
     selection: &RichSelection,
 ) -> InlineStyling {
-
     fn filter_out_non_text_nodes_they_dont_matter(
         (_ptr, data_kind): (Ptr<RichTag>, &RichNodeKind),
     ) -> Option<&TextState> {
