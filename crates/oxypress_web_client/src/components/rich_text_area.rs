@@ -1,7 +1,10 @@
 use bitflags::Flags;
 use core::panic;
 use oxypress_core::{
-    collections::{ringbuffer::RingBuffer, Ptr},
+    collections::{
+        ringbuffer::{RingBuffer, RingError},
+        Ptr,
+    },
     rich_text::{
         ExtraTextState, InlineStyling, RichAuxData, RichCharacterRangeKind, RichContentTable,
         RichForest, RichNodeKind, RichOffset, RichRange, RichSelection, RichSelectionDebugInfo,
@@ -80,6 +83,7 @@ impl ToolState {
         tool_idx: usize,
         input_ref: &NodeRef,
     ) -> Option<()> {
+        let helpers = ta_state.document_helpers();
         match self.kind {
             ToolKind::Bold | ToolKind::Italics | ToolKind::Underline => {
                 let selection = ta_state.document_selection()?;
@@ -99,20 +103,21 @@ impl ToolState {
                             clipped_node.node,
                             clipped_node.range,
                         ));
-                        ta_state.get_aux_text_state_mut(clipped_node.node, |extra_text_state| {
-                            extra_text_state.selection =
-                                TextSelectionKind::Range(clipped_node.range)
-                        });
+                        helpers
+                            .try_get_extra_text_state_mut(clipped_node.node, |extra_text_state| {
+                                extra_text_state.selection =
+                                    TextSelectionKind::Range(clipped_node.range)
+                            })
+                            .expect("Failed to get extra text state");
 
                         self.toggle_selection();
                     }
                     RichSelectionKind::MonoNode(RichCharacterRangeKind::MonoCharacter) => {
-                        let focused_styling = ta_state
+                        let focused_styling = helpers
                             .try_get_text_state(focused_node, |text_state| text_state.styling)
                             .expect("Failed to get text styling");
                         ta_state
-                            .deferred_tasks
-                            .enqueue(DeferredDocumentTask::with_kind(
+                            .enqueue_task(DeferredDocumentTask::with_kind(
                                 DeferredDocumentTaskKind::InsertNodeAt {
                                     node: selection.start_node,
                                     offset: selection.start_offset,
@@ -162,7 +167,7 @@ impl ToolState {
                             )
                             .filter(keep_non_empty_text_nodes)
                             .map(|(ptr, data)| {
-                                let range = ta_state
+                                let range = helpers
                                     .forest_content()
                                     .get(&ptr)
                                     .and_then(|aux_data| aux_data.as_text())
@@ -201,7 +206,7 @@ impl ToolState {
                             })
                             .collect::<Vec<_>>();
                         for clipped_node in clipped_list.iter() {
-                            ta_state
+                            helpers
                                 .forest_content_mut()
                                 .get_mut(&clipped_node.node)
                                 .and_then(RichAuxData::as_text_mut)
@@ -271,18 +276,18 @@ impl ToolState {
         let old_styling = selected_node_state.styling;
         let new_styling = styling_op(self, old_styling); //
 
-        ta_state
+        helpers
             .try_get_text_state_mut(selected_node, |text_state| {
                 text_state.content.clear();
                 text_state.content.push_str(head);
                 text_state.styling = old_styling;
             })
             .expect("Failed to get text_state");
-        ta_state.get_aux_data_mut(selected_node, |aux| {
-            if let Some(extra_state) = aux.as_text_mut() {
+        helpers
+            .try_get_extra_text_state_mut(selected_node, |extra_state| {
                 extra_state.selection = TextSelectionKind::Unselected;
-            }
-        });
+            })
+            .expect("Failed to get extra text state");
 
         let middle_node = helpers.create_text_node(
             TextState {
@@ -372,7 +377,7 @@ impl Default for ToolState {
     }
 }
 
-#[derive(Clone, PartialEq)]
+#[derive(Copy, Clone, PartialEq)]
 pub struct DeferredDocumentTask {
     created_at: panic::Location<'static>,
     task_kind: DeferredDocumentTaskKind,
@@ -382,13 +387,13 @@ impl DeferredDocumentTask {
     pub fn with_kind(kind: DeferredDocumentTaskKind) -> Self {
         let location = Location::caller();
         Self {
-            created_at: location.clone(),
+            created_at: *location,
             task_kind: kind,
         }
     }
 }
 
-#[derive(Clone, PartialEq)]
+#[derive(Copy, Clone, PartialEq)]
 pub enum DeferredDocumentTaskKind {
     InsertNodeAt {
         node: Ptr<RichTag>,
@@ -423,7 +428,6 @@ impl TextAreaState {
         }));
 
         forest.add_child(document, text);
-
         forest_content
             .entry(text)
             .or_insert(RichAuxData::Text(ExtraTextState {
@@ -433,9 +437,7 @@ impl TextAreaState {
         /* Hardcoded AST:
          * --------------
          *  Document
-         *  ..Bold
-         *  ....Text
-         *  ......'HELLO WORLD'
+         *  ..Text('HELLO WORLD'|Bold)
          * */
 
         Self {
@@ -470,7 +472,15 @@ impl TextAreaState {
     }
 
     #[track_caller]
-    pub fn enqueue_task(&mut self) {}
+    pub fn enqueue_task(
+        &mut self,
+        item: DeferredDocumentTask,
+    ) -> Result<(), oxypress_core::collections::ringbuffer::RingError> {
+        self.deferred_tasks.enqueue(item)
+    }
+    pub fn flush_tasks(&mut self) {
+        self.deferred_tasks.clear();
+    }
 
     pub fn set_focused_tool(mut self, tool_idx: Option<usize>) -> Self {
         self.focused_tool = tool_idx;
@@ -484,6 +494,10 @@ impl TextAreaState {
     pub fn set_focused_node(mut self, node: Ptr<RichTag>) -> Self {
         self.focused_node = node;
         self
+    }
+
+    pub fn focused_node_mut(&mut self) -> &mut Ptr<RichTag> {
+        &mut self.focused_node
     }
 
     pub fn flush_overlays(&self) {
@@ -508,6 +522,87 @@ impl TextAreaState {
         *self.document_selection_mut() = None;
     }
 
+    pub fn execute_tool_by_idx(&mut self, tool_idx: usize, input_ref: &NodeRef) {
+        let mut local_tool_state = self.tools[tool_idx].clone();
+        local_tool_state.execute(self, tool_idx, input_ref);
+        //update state with potentially mutated values
+        self.tools[tool_idx] = local_tool_state;
+    }
+
+    pub fn document_helpers(&self) -> RichDocumentHelpers {
+        RichDocumentHelpers {
+            document: self.document,
+            forest: self.forest.clone(),
+            forest_content: self.forest_content.clone(),
+        }
+    }
+
+    pub fn document_selection(&self) -> Option<RichSelection> {
+        self.document_selection
+    }
+
+    #[track_caller]
+    pub fn document_selection_mut(&mut self) -> &mut Option<RichSelection> {
+        let location = Location::caller();
+        console_log(format!("selection last mutated from ={}", location));
+        &mut self.document_selection
+    }
+}
+pub struct NodeInfo<'a> {
+    pub parent: Ptr<RichTag>,
+    pub children: &'a [Ptr<RichTag>],
+}
+
+pub struct RichDocumentHelpers {
+    pub document: Ptr<RichTag>,
+    pub forest: Rc<RefCell<RichForest>>,
+    pub forest_content: Rc<RefCell<RichContentTable>>,
+}
+
+impl RichDocumentHelpers {
+    pub fn node_info<F, FOUT>(&self, ptr: Ptr<RichTag>, cb: F) -> FOUT
+    where
+        F: Fn(NodeInfo<'_>) -> FOUT,
+    {
+        let forest = &*self.forest();
+        let children = forest.get_children(ptr).as_slice();
+        let parent = *forest.get_parent(ptr);
+        let info = NodeInfo { parent, children };
+        cb(info)
+    }
+    pub fn create_text_node(&self, state: TextState, extra: ExtraTextState) -> Ptr<RichTag> {
+        let forest = &mut *self.forest.borrow_mut();
+        let forest_content = &mut *self.forest_content.borrow_mut();
+        let ptr = forest.allocate_node(RichNodeKind::Text(state));
+        forest_content.insert(ptr, RichAuxData::Text(extra));
+        ptr
+    }
+    pub fn split_content_mono(content: &str, selection: RichSelection) -> (&str, &str, &str) {
+        let head = &content[0..selection.start_offset.utf8];
+        let selected = &content[selection.start_offset.utf8..selection.end_offset.utf8];
+        let tail = &content[selection.end_offset.utf8..];
+        (head, selected, tail)
+    }
+    pub fn delete_node(&self, root: Ptr<RichTag>) {
+        let forest = &mut *self.forest.borrow_mut();
+        let forest_content = &mut *self.forest_content.borrow_mut();
+        forest.free_and_then(root, |ptr| {
+            forest_content.remove(&ptr);
+        });
+    }
+    pub fn try_node_data<F, FOUT>(&self, ptr: Ptr<RichTag>, cb: F) -> FOUT
+    where
+        F: Fn(&RichNodeKind) -> FOUT,
+    {
+        cb(self.forest().get_data(ptr))
+    }
+    pub fn try_node_data_mut<F, FOUT>(&self, ptr: Ptr<RichTag>, mut cb: F) -> FOUT
+    where
+        F: FnMut(&mut RichNodeKind) -> FOUT,
+    {
+        cb(self.forest_mut().get_data_mut(ptr))
+    }
+
     pub fn get_aux_data<F, Out>(&self, ptr: Ptr<RichTag>, cb: F) -> Option<Out>
     where
         F: FnOnce(&RichAuxData) -> Out,
@@ -529,12 +624,51 @@ impl TextAreaState {
     pub fn forest_content<'a>(&'a self) -> std::cell::Ref<'a, RichContentTable> {
         self.forest_content.borrow()
     }
+
+    pub fn forest(&self) -> std::cell::Ref<'_, RichForest> {
+        self.forest.borrow()
+    }
+    pub fn forest_mut(&self) -> std::cell::RefMut<'_, RichForest> {
+        self.forest.borrow_mut()
+    }
+
     pub fn get_aux_text_state_mut<F, Out>(&self, ptr: Ptr<RichTag>, cb: F) -> Option<Out>
     where
         F: FnOnce(&mut ExtraTextState) -> Out,
     {
         self.get_aux_data_mut(ptr, |aux_data| aux_data.as_text_mut().map(cb))
             .flatten()
+    }
+
+    pub fn try_get_extra_text_state<F, FOUT>(
+        &self,
+        ptr: Ptr<RichTag>,
+        cb: F,
+    ) -> Result<FOUT, &'static str>
+    where
+        F: Fn(&ExtraTextState) -> FOUT,
+    {
+        let forest_content = self.forest_content();
+        let data = forest_content
+            .get(&ptr)
+            .ok_or("Pointer not found in table")?;
+        let extra_text_state = data.as_text().ok_or("Node isn't a text node")?;
+        Ok(cb(extra_text_state))
+    }
+    pub fn try_get_extra_text_state_mut<F, FOUT>(
+        &self,
+        ptr: Ptr<RichTag>,
+        cb: F,
+    ) -> Result<FOUT, &'static str>
+    where
+        F: Fn(&mut ExtraTextState) -> FOUT,
+    {
+        let mut forest_content = self.forest_content_mut();
+        let data = forest_content
+            .get_mut(&ptr)
+            .ok_or("Pointer not found in table")?;
+        let extra_text_state = data.as_text_mut().ok_or("Node isn't a text node")?;
+        Ok(cb(extra_text_state))
     }
 
     pub fn try_set_text_selection(
@@ -550,6 +684,7 @@ impl TextAreaState {
         extra_text_state.selection = selection;
         Ok(())
     }
+
     pub fn try_get_text_selection(
         &self,
         ptr: Ptr<RichTag>,
@@ -584,61 +719,6 @@ impl TextAreaState {
         let node_data = forest.get_data_mut(ptr);
         let text_state = node_data.as_text_mut().ok_or("Not a text node")?;
         Ok(f(text_state))
-    }
-
-    pub fn execute_tool_by_idx(&mut self, tool_idx: usize, input_ref: &NodeRef) {
-        let mut local_tool_state = self.tools[tool_idx].clone();
-        local_tool_state.execute(self, tool_idx, input_ref);
-        //update state with potentially mutated values
-        self.tools[tool_idx] = local_tool_state;
-    }
-
-    pub fn document_helpers(&self) -> RichDocumentHelpers {
-        RichDocumentHelpers {
-            document: self.document,
-            forest: self.forest.clone(),
-            forest_content: self.forest_content.clone(),
-        }
-    }
-
-    pub fn document_selection(&self) -> Option<RichSelection> {
-        self.document_selection
-    }
-
-    #[track_caller]
-    pub fn document_selection_mut(&mut self) -> &mut Option<RichSelection> {
-        let location = Location::caller();
-        console_log(format!("selection last mutated from ={}", location));
-        &mut self.document_selection
-    }
-}
-
-pub struct RichDocumentHelpers {
-    pub document: Ptr<RichTag>,
-    pub forest: Rc<RefCell<RichForest>>,
-    pub forest_content: Rc<RefCell<RichContentTable>>,
-}
-
-impl RichDocumentHelpers {
-    pub fn create_text_node(&self, state: TextState, extra: ExtraTextState) -> Ptr<RichTag> {
-        let forest = &mut *self.forest.borrow_mut();
-        let forest_content = &mut *self.forest_content.borrow_mut();
-        let ptr = forest.allocate_node(RichNodeKind::Text(state));
-        forest_content.insert(ptr, RichAuxData::Text(extra));
-        ptr
-    }
-    pub fn split_content_mono(content: &str, selection: RichSelection) -> (&str, &str, &str) {
-        let head = &content[0..selection.start_offset.utf8];
-        let selected = &content[selection.start_offset.utf8..selection.end_offset.utf8];
-        let tail = &content[selection.end_offset.utf8..];
-        (head, selected, tail)
-    }
-    pub fn delete_node(&self, root: Ptr<RichTag>) {
-        let forest = &mut *self.forest.borrow_mut();
-        let forest_content = &mut *self.forest_content.borrow_mut();
-        forest.free_and_then(root, |ptr| {
-            forest_content.remove(&ptr);
-        });
     }
 }
 
@@ -769,6 +849,7 @@ pub fn RichTextArea() -> Html {
         move |e: Event| {
             console_log("ONSELECTIONCHANGE fired!".into());
             let mut state = state_handler.deref().clone();
+            let helpers = state.document_helpers();
 
             let focused_node = state.focused_node;
             let input = e
@@ -785,7 +866,7 @@ pub fn RichTextArea() -> Html {
                 &input_text,
                 input.selection_end().ok().flatten().unwrap_or(0) as usize,
             );
-            let updated_document_selection = if let Some(text_state) = state
+            let updated_document_selection = if let Some(text_state) = helpers
                 .forest_content_mut()
                 .get_mut(&focused_node)
                 .and_then(RichAuxData::as_text_mut)
@@ -812,7 +893,7 @@ pub fn RichTextArea() -> Html {
             };
 
             *state.document_selection_mut() = updated_document_selection;
-            let focused_node_styling = state
+            let focused_node_styling = helpers
                 .try_get_text_state(focused_node, |text_state| text_state.styling)
                 .expect("Failed to get text state from focused node");
             update_toolbar_styles(&mut state, focused_node_styling);
@@ -824,6 +905,7 @@ pub fn RichTextArea() -> Html {
         let state_handler = state.clone();
         move |e: KeyboardEvent| {
             let mut state = state_handler.deref().clone();
+            let helpers = state.document_helpers();
 
             let focused_node = state.focused_node;
             if focused_node == Ptr::null() {
@@ -838,6 +920,113 @@ pub fn RichTextArea() -> Html {
 
             match focused_node_type {
                 RichNodeKind::Text(focused_node_state) => match e.key().as_str() {
+                    "Backspace" => {
+                        let focused_caret_position = helpers
+                            .try_get_extra_text_state_mut(focused_node, |extra_text_state| {
+                                extra_text_state.selection.as_caret()
+                            })
+                            .ok()
+                            .flatten()
+                            .expect("Failed to get caret");
+                        if focused_node_state.content.len() <= 1
+                            || focused_caret_position == RichOffset::zero()
+                        {
+                            e.prevent_default();
+
+                            let document_node = state.document;
+                            struct NodeAdjacency {
+                                left: Option<Ptr<RichTag>>,
+                                right: Option<Ptr<RichTag>>,
+                            }
+                            let get_adjacent_nodes = |root| {
+                                helpers.node_info(document_node, |info| {
+                                    let idx = info
+                                        .children
+                                        .iter()
+                                        .enumerate()
+                                        .find(|&(_, &ptr)| ptr == root)
+                                        .map(|(idx, _)| idx)
+                                        .expect("Failed to find focused_node in document");
+                                    let adj_left = info.children.get(idx - 1).copied();
+                                    let adj_right = info.children.get(idx + 1).copied();
+                                    NodeAdjacency {
+                                        left: adj_left,
+                                        right: adj_right,
+                                    }
+                                })
+                            };
+
+                            let find_first_non_newline_adj_node =
+                                |start: Ptr<RichTag>, skipped_nodes: &mut Vec<Ptr<_>>| {
+                                    let mut ptr =
+                                        get_adjacent_nodes(start).left.unwrap_or(Ptr::null());
+
+                                    while !ptr.is_null()
+                                        && helpers.try_node_data(ptr, RichNodeKind::is_newline)
+                                    {
+                                        skipped_nodes.push(ptr);
+                                        ptr = get_adjacent_nodes(ptr).left.unwrap_or(Ptr::null());
+                                    }
+                                    ptr
+                                };
+
+                            let mut skipped_nodes = vec![];
+                            let new_focused_node =
+                                find_first_non_newline_adj_node(focused_node, &mut skipped_nodes);
+
+                            helpers.try_node_data_mut(new_focused_node, |new_focused_state| {
+                                // A MATCH for every possible node makes sense here
+                                // because for container nodes we can do something different
+                                console_log(format!(
+                                    "new_focused_state = \'{:?}\'",
+                                    new_focused_state
+                                ));
+                                match new_focused_state {
+                                    RichNodeKind::Newline | RichNodeKind::Document => {
+                                        panic!("Should never be the case. Something is very wrong")
+                                    }
+                                    RichNodeKind::Text(TextState {
+                                        content: new_focused_content,
+                                        ..
+                                    }) => {
+                                        *state.focused_node_mut() = new_focused_node;
+                                        let new_caret_position = RichOffset::from_utf8_offset(
+                                            new_focused_content,
+                                            new_focused_content.len(),
+                                        );
+                                        if focused_node_state.content.len() > 1 || focused_caret_position == RichOffset::zero() {
+                                            new_focused_content.push_str(&focused_node_state.content);
+                                        }
+
+                                        input_elem.set_value(new_focused_content);
+
+                                        helpers
+                                            .try_get_extra_text_state_mut(
+                                                new_focused_node,
+                                                |extra_text_state| {
+                                                    extra_text_state.selection =
+                                                        TextSelectionKind::Caret(
+                                                            new_caret_position,
+                                                        );
+                                                },
+                                            )
+                                            .expect("Failed to initalize caret for new node");
+                                        input_elem
+                                            .set_selection_range(
+                                                new_caret_position.utf16 as u32,
+                                                new_caret_position.utf16 as u32,
+                                            )
+                                            .expect("Failed to set selection range");
+                                    }
+                                }
+                            });
+
+                            helpers.delete_node(focused_node);
+                            for skipped_node in skipped_nodes {
+                                helpers.delete_node(skipped_node);
+                            }
+                        }
+                    }
                     "Enter" => {
                         let new_text_node = {
                             let forest = &mut *state.forest.borrow_mut();
@@ -894,7 +1083,7 @@ pub fn RichTextArea() -> Html {
                         };
                         state = state.set_focused_node(new_text_node);
                         state.flush_overlays();
-                        state
+                        helpers
                             .try_set_text_selection(
                                 new_text_node,
                                 TextSelectionKind::Caret(RichOffset::zero()),
@@ -978,6 +1167,7 @@ pub fn RichTextArea() -> Html {
         let ta_state_handler = state.clone();
         Callback::from(move |event: web_sys::InputEvent| {
             let mut ta_state = ta_state_handler.deref().clone();
+            let helpers = ta_state.document_helpers();
 
             console_log("ON BEFORE INPUT IS BEING FIRED".into());
             console_log(format!("data = \'{}\'", event.data().unwrap_or_default()));
@@ -998,19 +1188,19 @@ pub fn RichTextArea() -> Html {
                     } => {
                         event.prevent_default();
 
-                        let node_state = ta_state
+                        let node_state = helpers
                             .try_get_text_state(head_node, |text_state| text_state.clone())
                             .expect("Failed to get styling");
                         let head = &node_state.content[0..offset.utf8];
                         let tail = &node_state.content[offset.utf8..];
 
-                        ta_state
+                        helpers
                             .try_get_text_state_mut(head_node, |text_state| {
                                 text_state.content.clear();
                                 text_state.content.push_str(head);
                             })
                             .expect("Failed to mutate TextState");
-                        ta_state.get_aux_text_state_mut(head_node, |extra_text_state| {
+                        helpers.get_aux_text_state_mut(head_node, |extra_text_state| {
                             extra_text_state.selection = TextSelectionKind::Unselected
                         });
 
@@ -1053,7 +1243,9 @@ pub fn RichTextArea() -> Html {
                     }
                     DeferredDocumentTaskKind::NOP => {}
                 },
-                Err(e) => {}
+                Err(e) => {
+                    console_log(format!("ErrStatus {:?}", e));
+                }
             }
 
             ta_state_handler.set(ta_state);
@@ -1244,6 +1436,7 @@ fn RichDisplayNode(p: &RichDisplayNodeProps) -> Html {
                 Callback::from(move |_e: MouseEvent| {
                     let mut ta_state = ta_state_handle.deref().clone();
                     ta_state.flush_overlays();
+                    ta_state.flush_tasks();
                     *ta_state.document_selection_mut() = None;
                     ta_state_handle.set(ta_state);
                 })
@@ -1438,11 +1631,12 @@ fn RichDisplayNode(p: &RichDisplayNodeProps) -> Html {
     }
 }
 fn apply_highlights(state: &TextAreaState, selection: RichSelection) {
+    let helpers = state.document_helpers();
     let highlight_start_node = || {
-        let end_offset = state
+        let end_offset = helpers
             .try_get_text_state(selection.start_node, TextState::get_end_offset)
             .expect("Failed to get text state");
-        state
+        helpers
             .get_aux_text_state_mut(selection.start_node, |extra_text_state| {
                 extra_text_state
                     .set_range_selection_with_offsets(selection.start_offset, end_offset)
@@ -1450,7 +1644,7 @@ fn apply_highlights(state: &TextAreaState, selection: RichSelection) {
             .expect("Failed to get aux text state");
     };
     let highligh_end_node = || {
-        state
+        helpers
             .get_aux_text_state_mut(selection.end_node, |extra_text_state| {
                 extra_text_state
                     .set_range_selection_with_offsets(RichOffset::zero(), selection.end_offset);
@@ -1460,7 +1654,7 @@ fn apply_highlights(state: &TextAreaState, selection: RichSelection) {
     let highlight_in_between_start_and_finish = || {
         let start_node = selection.start_node;
         let end_node = selection.end_node;
-        let mut forest_content = state.forest_content_mut();
+        let mut forest_content = state.forest_content.borrow_mut();
 
         state
             .forest
