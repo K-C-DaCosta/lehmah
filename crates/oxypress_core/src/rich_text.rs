@@ -22,13 +22,10 @@ bitflags! {
 #[derive(Clone, PartialEq, Debug)]
 pub enum RichNodeKind {
     Document,
-    Newline,
+    Line,
     Text(TextState),
 }
 impl RichNodeKind {
-    pub fn is_newline(&self)->bool{
-        matches!(self,Self::Newline)
-    }
     pub fn as_text(&self) -> Option<&TextState> {
         if let Self::Text(state) = self {
             Some(state)
@@ -44,7 +41,6 @@ impl RichNodeKind {
             None
         }
     }
-
     pub fn is_text_kind(&self) -> bool {
         matches!(self, Self::Text(_))
     }

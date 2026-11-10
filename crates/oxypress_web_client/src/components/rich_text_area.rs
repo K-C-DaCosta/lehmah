@@ -421,23 +421,27 @@ impl TextAreaState {
         let mut forest = RichForest::new();
         let mut forest_content = HashMap::new();
         let document = forest.allocate_node(RichNodeKind::Document);
+        let line_container = forest.allocate_node(RichNodeKind::Line);
+
         let sample_text = "Hello World";
         let text = forest.allocate_node(RichNodeKind::Text(TextState {
             content: String::from(sample_text),
             styling: InlineStyling::BOLD,
         }));
-
-        forest.add_child(document, text);
         forest_content
             .entry(text)
             .or_insert(RichAuxData::Text(ExtraTextState {
                 selection: TextSelectionKind::Caret(RichOffset::from_utf8_offset(sample_text, 5)),
             }));
 
+        forest.add_child(document, line_container);
+        forest.add_child(line_container, text);
+
         /* Hardcoded AST:
          * --------------
          *  Document
-         *  ..Text('HELLO WORLD'|Bold)
+         *  ..Line
+         *  ....Text('HELLO WORLD'|Bold)
          * */
 
         Self {
@@ -576,6 +580,9 @@ impl RichDocumentHelpers {
         let ptr = forest.allocate_node(RichNodeKind::Text(state));
         forest_content.insert(ptr, RichAuxData::Text(extra));
         ptr
+    }
+    pub fn create_line_node(&self) -> Ptr<RichTag> {
+        self.forest_mut().allocate_node(RichNodeKind::Line)
     }
     pub fn split_content_mono(content: &str, selection: RichSelection) -> (&str, &str, &str) {
         let head = &content[0..selection.start_offset.utf8];
@@ -834,7 +841,7 @@ pub fn RichTextArea() -> Html {
                                     ));
                             }
                         }
-                        RichNodeKind::Newline => {}
+                        RichNodeKind::Line => {}
                         _ => {}
                     }
                 }
@@ -920,166 +927,20 @@ pub fn RichTextArea() -> Html {
 
             match focused_node_type {
                 RichNodeKind::Text(focused_node_state) => match e.key().as_str() {
-                    "Backspace" => {
-                        let focused_caret_position = helpers
-                            .try_get_extra_text_state_mut(focused_node, |extra_text_state| {
-                                extra_text_state.selection.as_caret()
-                            })
-                            .ok()
-                            .flatten()
-                            .expect("Failed to get caret");
-                        if focused_node_state.content.len() <= 1
-                            || focused_caret_position == RichOffset::zero()
-                        {
-                            e.prevent_default();
-
-                            let document_node = state.document;
-                            struct NodeAdjacency {
-                                left: Option<Ptr<RichTag>>,
-                                right: Option<Ptr<RichTag>>,
-                            }
-                            let get_adjacent_nodes = |root| {
-                                helpers.node_info(document_node, |info| {
-                                    let idx = info
-                                        .children
-                                        .iter()
-                                        .enumerate()
-                                        .find(|&(_, &ptr)| ptr == root)
-                                        .map(|(idx, _)| idx)
-                                        .expect("Failed to find focused_node in document");
-                                    let adj_left = info.children.get(idx - 1).copied();
-                                    let adj_right = info.children.get(idx + 1).copied();
-                                    NodeAdjacency {
-                                        left: adj_left,
-                                        right: adj_right,
-                                    }
-                                })
-                            };
-
-                            let find_first_non_newline_adj_node =
-                                |start: Ptr<RichTag>, skipped_nodes: &mut Vec<Ptr<_>>| {
-                                    let mut ptr =
-                                        get_adjacent_nodes(start).left.unwrap_or(Ptr::null());
-
-                                    while !ptr.is_null()
-                                        && helpers.try_node_data(ptr, RichNodeKind::is_newline)
-                                    {
-                                        skipped_nodes.push(ptr);
-                                        ptr = get_adjacent_nodes(ptr).left.unwrap_or(Ptr::null());
-                                    }
-                                    ptr
-                                };
-
-                            let mut skipped_nodes = vec![];
-                            let new_focused_node =
-                                find_first_non_newline_adj_node(focused_node, &mut skipped_nodes);
-                            let new_focused_node_on_same_line = skipped_nodes.is_empty();
-
-                            helpers.try_node_data_mut(new_focused_node, |new_focused_state| {
-                                // A MATCH for every possible node makes sense here
-                                // because for container nodes we can do something different
-                                console_log(format!(
-                                    "new_focused_state = \'{:?}\'",
-                                    new_focused_state
-                                ));
-                                match new_focused_state {
-                                    RichNodeKind::Newline | RichNodeKind::Document => {
-                                        panic!("Should never be the case. Something is very wrong")
-                                    }
-                                    RichNodeKind::Text(TextState {
-                                        content: new_focused_content,
-                                        ..
-                                    }) => {
-                                        *state.focused_node_mut() = new_focused_node;
-                                        console_log(format!("skipped nodes = {:?}",skipped_nodes));
-
-                                        if new_focused_node_on_same_line
-                                            && focused_caret_position == RichOffset::zero()
-                                            && !focused_node_state.content.is_empty()
-                                        {
-                                            new_focused_content.pop();
-                                            let new_caret_position = RichOffset::from_utf8_offset(
-                                                new_focused_content,
-                                                new_focused_content.len(),
-                                            );
-                                            helpers
-                                                .try_get_extra_text_state_mut(
-                                                    new_focused_node,
-                                                    |extra_text_state| {
-                                                        extra_text_state.selection =
-                                                            TextSelectionKind::Caret(
-                                                                new_caret_position,
-                                                            )
-                                                    },
-                                                )
-                                                .expect("Failed to set caret position");
-                                            input_elem.set_value(new_focused_content);
-                                            input_elem
-                                                .set_selection_range(
-                                                    new_caret_position.utf16 as u32,
-                                                    new_caret_position.utf16 as u32,
-                                                )
-                                                .expect("Failed to set range");
-                                        } else {
-                                            let new_caret_position = RichOffset::from_utf8_offset(
-                                                new_focused_content,
-                                                new_focused_content.len(),
-                                            );
-
-                                            if focused_node_state.content.len() > 1
-                                                || focused_caret_position == RichOffset::zero()
-                                            {
-                                                new_focused_content
-                                                    .push_str(&focused_node_state.content);
-                                            }
-
-                                            input_elem.set_value(new_focused_content);
-
-                                            helpers
-                                                .try_get_extra_text_state_mut(
-                                                    new_focused_node,
-                                                    |extra_text_state| {
-                                                        extra_text_state.selection =
-                                                            TextSelectionKind::Caret(
-                                                                new_caret_position,
-                                                            );
-                                                    },
-                                                )
-                                                .expect("Failed to initalize caret for new node");
-                                            input_elem
-                                                .set_selection_range(
-                                                    new_caret_position.utf16 as u32,
-                                                    new_caret_position.utf16 as u32,
-                                                )
-                                                .expect("Failed to set selection range");
-                                        }
-                                    }
-                                }
-                            });
-
-                            if !new_focused_node_on_same_line {
-                                helpers.delete_node(focused_node);
-                            }
-                            for skipped_node in skipped_nodes {
-                                helpers.delete_node(skipped_node);
-                            }
-                        }
-                    }
+                    "Backspace" => {}
                     "Enter" => {
                         let new_text_node = {
-                            let forest = &mut *state.forest.borrow_mut();
-                            let forest_content = &mut *state.forest_content.borrow_mut();
+                            let focused_node_extra_state = helpers
+                                .try_get_extra_text_state(focused_node, |extra_text_state| {
+                                    extra_text_state.clone()
+                                })
+                                .expect("Failed to get extra text state");
 
-                            let extra_focused_node_state = forest_content
-                                .get(&focused_node)
-                                .and_then(RichAuxData::as_text)
-                                .cloned()
-                                .expect("Failed to fetch text state");
+                            let current_line_container =
+                                helpers.node_info(focused_node, |info| info.parent);
+                            let new_line_container = helpers.create_line_node();
 
-                            let focused_parent = *forest.get_parent(focused_node);
-                            let newline_element = forest.allocate_node(RichNodeKind::Newline);
-
-                            let caret_position = extra_focused_node_state
+                            let caret_position = focused_node_extra_state
                                 .selection
                                 .as_caret()
                                 .expect("Focused node expected to have a caret selection");
@@ -1088,24 +949,29 @@ pub fn RichTextArea() -> Html {
                             let upper_split =
                                 String::from(&focused_node_state.content[caret_position.utf8..]);
 
-                            if let Some(text_state) =
-                                forest.get_data_mut(focused_node).as_text_mut()
-                            {
+                            helpers.try_get_text_state_mut(focused_node, |text_state| {
                                 text_state.content = lower_split;
-                            }
+                            }).expect("Failed to get text state ");
 
-                            let new_text_node =
-                                forest.allocate_node(RichNodeKind::Text(TextState {
+                            let new_text_node = helpers.create_text_node(
+                                TextState {
                                     content: upper_split.to_string(),
                                     styling: focused_node_state.styling,
-                                }));
-
-                            forest_content.insert(
-                                new_text_node,
-                                RichAuxData::Text(ExtraTextState {
+                                },
+                                ExtraTextState {
                                     selection: TextSelectionKind::Caret(RichOffset::zero()),
-                                }),
+                                },
                             );
+
+                            helpers.forest_mut().add_child_at(
+                                state.document,
+                                new_line_container,
+                                current_line_container,
+                                1,
+                            );
+                            helpers
+                                .forest_mut()
+                                .add_child(new_line_container, new_text_node);
 
                             input_elem.set_value(&upper_split);
                             input_elem
@@ -1114,8 +980,6 @@ pub fn RichTextArea() -> Html {
                             input_elem
                                 .set_selection_end(Some(0))
                                 .expect("Failed to set input end selection");
-                            forest.add_child_at(focused_parent, newline_element, focused_node, 1);
-                            forest.add_child_at(focused_parent, new_text_node, newline_element, 1);
 
                             new_text_node
                         };
@@ -1659,10 +1523,12 @@ fn RichDisplayNode(p: &RichDisplayNodeProps) -> Html {
                 }),
             }
         }
-        RichNodeKind::Newline => {
+        RichNodeKind::Line => {
             html! {
                 <>
-                    <rt-newline data-ast-id={root.to_string()}></rt-newline>
+                    <rt-line data-ast-id={root.to_string()}>
+                        {for child_iterator}
+                    </rt-line>
                 </>
             }
         }

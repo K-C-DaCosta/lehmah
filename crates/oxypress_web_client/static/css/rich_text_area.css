@@ -120,7 +120,7 @@ rich-text-area rt-selection {
     color: HighlightText;
 }
 
-rich-text-area rt-newline {
+rich-text-area rt-line {
     display: block;
     /*
      *position: relative;
