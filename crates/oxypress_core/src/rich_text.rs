@@ -142,6 +142,12 @@ pub struct RichRange {
     pub end: RichOffset,
 }
 impl RichRange {
+    pub fn from_caret(caret:RichOffset)->Self{
+        Self{
+            start:caret,
+            end:caret,
+        }
+    }
     pub fn from_str_unbounded(content: &str) -> Self {
         Self {
             start: RichOffset::zero(),

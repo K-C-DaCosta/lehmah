@@ -396,11 +396,12 @@ impl<Tag, T> FlatForest<Tag, T> {
         if root == Ptr::null() {
             return false;
         }
-        let len = self.get_children(root).len();
-        (on_root)(self, root);
-
-        for k in 0..len {
-            let child = self.get_children(root)[k];
+        if (on_root)(self, root) {
+            return true; 
+        }
+        let child_count = self.get_children(root).len();
+        for child_idx in 0..child_count {
+            let child = self.get_children(root)[child_idx];
             if self.traverse_all_helper_mut(child, on_root) {
                 return true;
             }
