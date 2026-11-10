@@ -973,6 +973,7 @@ pub fn RichTextArea() -> Html {
                             let mut skipped_nodes = vec![];
                             let new_focused_node =
                                 find_first_non_newline_adj_node(focused_node, &mut skipped_nodes);
+                            let new_focused_node_on_same_line = skipped_nodes.is_empty();
 
                             helpers.try_node_data_mut(new_focused_node, |new_focused_state| {
                                 // A MATCH for every possible node makes sense here
@@ -990,38 +991,75 @@ pub fn RichTextArea() -> Html {
                                         ..
                                     }) => {
                                         *state.focused_node_mut() = new_focused_node;
-                                        let new_caret_position = RichOffset::from_utf8_offset(
-                                            new_focused_content,
-                                            new_focused_content.len(),
-                                        );
-                                        if focused_node_state.content.len() > 1 || focused_caret_position == RichOffset::zero() {
-                                            new_focused_content.push_str(&focused_node_state.content);
+                                        console_log(format!("skipped nodes = {:?}",skipped_nodes));
+
+                                        if new_focused_node_on_same_line
+                                            && focused_caret_position == RichOffset::zero()
+                                            && !focused_node_state.content.is_empty()
+                                        {
+                                            new_focused_content.pop();
+                                            let new_caret_position = RichOffset::from_utf8_offset(
+                                                new_focused_content,
+                                                new_focused_content.len(),
+                                            );
+                                            helpers
+                                                .try_get_extra_text_state_mut(
+                                                    new_focused_node,
+                                                    |extra_text_state| {
+                                                        extra_text_state.selection =
+                                                            TextSelectionKind::Caret(
+                                                                new_caret_position,
+                                                            )
+                                                    },
+                                                )
+                                                .expect("Failed to set caret position");
+                                            input_elem.set_value(new_focused_content);
+                                            input_elem
+                                                .set_selection_range(
+                                                    new_caret_position.utf16 as u32,
+                                                    new_caret_position.utf16 as u32,
+                                                )
+                                                .expect("Failed to set range");
+                                        } else {
+                                            let new_caret_position = RichOffset::from_utf8_offset(
+                                                new_focused_content,
+                                                new_focused_content.len(),
+                                            );
+
+                                            if focused_node_state.content.len() > 1
+                                                || focused_caret_position == RichOffset::zero()
+                                            {
+                                                new_focused_content
+                                                    .push_str(&focused_node_state.content);
+                                            }
+
+                                            input_elem.set_value(new_focused_content);
+
+                                            helpers
+                                                .try_get_extra_text_state_mut(
+                                                    new_focused_node,
+                                                    |extra_text_state| {
+                                                        extra_text_state.selection =
+                                                            TextSelectionKind::Caret(
+                                                                new_caret_position,
+                                                            );
+                                                    },
+                                                )
+                                                .expect("Failed to initalize caret for new node");
+                                            input_elem
+                                                .set_selection_range(
+                                                    new_caret_position.utf16 as u32,
+                                                    new_caret_position.utf16 as u32,
+                                                )
+                                                .expect("Failed to set selection range");
                                         }
-
-                                        input_elem.set_value(new_focused_content);
-
-                                        helpers
-                                            .try_get_extra_text_state_mut(
-                                                new_focused_node,
-                                                |extra_text_state| {
-                                                    extra_text_state.selection =
-                                                        TextSelectionKind::Caret(
-                                                            new_caret_position,
-                                                        );
-                                                },
-                                            )
-                                            .expect("Failed to initalize caret for new node");
-                                        input_elem
-                                            .set_selection_range(
-                                                new_caret_position.utf16 as u32,
-                                                new_caret_position.utf16 as u32,
-                                            )
-                                            .expect("Failed to set selection range");
                                     }
                                 }
                             });
 
-                            helpers.delete_node(focused_node);
+                            if !new_focused_node_on_same_line {
+                                helpers.delete_node(focused_node);
+                            }
                             for skipped_node in skipped_nodes {
                                 helpers.delete_node(skipped_node);
                             }
