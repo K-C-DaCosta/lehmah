@@ -560,7 +560,11 @@ impl TextAreaState {
 }
 pub struct NodeInfo<'a> {
     pub parent: Ptr<RichTag>,
-    pub children: &'a [Ptr<RichTag>],
+    pub children: &'a Vec<Ptr<RichTag>>,
+}
+pub struct NodeInfoMut<'a> {
+    pub parent: Ptr<RichTag>,
+    pub children: &'a mut Vec<Ptr<RichTag>>,
 }
 
 pub struct RichDocumentHelpers {
@@ -609,11 +613,22 @@ impl RichDocumentHelpers {
         F: Fn(NodeInfo<'_>) -> FOUT,
     {
         let forest = &*self.forest();
-        let children = forest.get_children(ptr).as_slice();
+        let children = forest.get_children(ptr);
         let parent = *forest.get_parent(ptr);
         let info = NodeInfo { parent, children };
         cb(info)
     }
+    pub fn node_info_mut<F, FOUT>(&self, ptr: Ptr<RichTag>, cb: F) -> FOUT
+    where
+        F: Fn(NodeInfoMut<'_>) -> FOUT,
+    {
+        let forest = &mut *self.forest_mut();
+        let parent = *forest.get_parent_mut(ptr);
+        let children = forest.get_children_mut(ptr);
+        let info = NodeInfoMut { parent, children };
+        cb(info)
+    }
+
     pub fn create_text_node(&self, state: TextState, extra: ExtraTextState) -> Ptr<RichTag> {
         let forest = &mut *self.forest.borrow_mut();
         let forest_content = &mut *self.forest_content.borrow_mut();
@@ -989,59 +1004,87 @@ pub fn RichTextArea() -> Html {
                         RichNodeKind::Text(focused_node_state) => match e.key().as_str() {
                             "Backspace" => {}
                             "Enter" => {
-                                let new_text_node = {
-                                    let current_line_container =
-                                        helpers.node_info(focused_node, |info| info.parent);
-                                    let new_line_container = helpers.create_line_node();
+                                let current_line_container =
+                                    helpers.node_info(focused_node, |info| info.parent);
+                                let current_line_children = helpers
+                                    .node_info(current_line_container, |info| {
+                                        info.children.to_vec()
+                                    });
+                                let focued_node_position_in_line_container = current_line_children
+                                    .iter()
+                                    .enumerate()
+                                    .find(|(_, ptr)| **ptr == focused_node)
+                                    .map(|(idx, _)| idx)
+                                    .expect("Failed to find focused node in container");
 
-                                    let CaretSplitContents {
-                                        left: lower_split,
-                                        right: upper_split,
-                                    } = RichDocumentHelpers::split_content_mono(
-                                        &focused_node_state.content,
-                                        document_selection,
-                                    )
-                                    .expect("Failed to get monoselection")
-                                    .as_caret_split()
-                                    .expect("Failed to get caret split");
+                                let new_line_container = helpers.create_line_node();
 
-                                    helpers
-                                        .try_get_text_state_mut(focused_node, |text_state| {
-                                            text_state.content.clear();
-                                            text_state.content.push_str(lower_split);
-                                        })
-                                        .expect("Failed to get text state ");
+                                let CaretSplitContents {
+                                    left: lower_split,
+                                    right: upper_split,
+                                } = RichDocumentHelpers::split_content_mono(
+                                    &focused_node_state.content,
+                                    document_selection,
+                                )
+                                .expect("Failed to get monoselection")
+                                .as_caret_split()
+                                .expect("Failed to get caret split");
 
-                                    let new_text_node = helpers.create_text_node(
-                                        TextState {
-                                            content: upper_split.to_string(),
-                                            styling: focused_node_state.styling,
-                                        },
-                                        ExtraTextState {
-                                            selection: TextSelectionKind::Caret(RichOffset::zero()),
-                                        },
-                                    );
+                                helpers
+                                    .try_get_text_state_mut(focused_node, |text_state| {
+                                        text_state.content.clear();
+                                        text_state.content.push_str(lower_split);
+                                    })
+                                    .expect("Failed to get text state ");
 
-                                    helpers.forest_mut().add_child_at(
-                                        state.document,
-                                        new_line_container,
-                                        current_line_container,
-                                        1,
-                                    );
-                                    helpers
-                                        .forest_mut()
-                                        .add_child(new_line_container, new_text_node);
+                                let new_text_node = helpers.create_text_node(
+                                    TextState {
+                                        content: upper_split.to_string(),
+                                        styling: focused_node_state.styling,
+                                    },
+                                    ExtraTextState {
+                                        selection: TextSelectionKind::Caret(RichOffset::zero()),
+                                    },
+                                );
 
-                                    input_elem.set_value(upper_split);
-                                    input_elem
-                                        .set_selection_start(Some(0))
-                                        .expect("Failed to set input start selection");
-                                    input_elem
-                                        .set_selection_end(Some(0))
-                                        .expect("Failed to set input end selection");
+                                helpers.forest_mut().add_child_at(
+                                    state.document,
+                                    new_line_container,
+                                    current_line_container,
+                                    1,
+                                );
+                                helpers
+                                    .forest_mut()
+                                    .add_child(new_line_container, new_text_node);
 
-                                    new_text_node
-                                };
+                                let nodes_to_the_right_of_focused = &current_line_children
+                                    [focued_node_position_in_line_container + 1..];
+
+                                // move all nodes to the right of focused into the new line along with the new_text_node
+                                nodes_to_the_right_of_focused.iter().copied().for_each(
+                                    |node_after_focused| {
+                                        helpers
+                                            .forest_mut()
+                                            .add_child(new_line_container, node_after_focused);
+                                    },
+                                );
+
+                                // All of the nodes to the right of focus are in the new line and are stale
+                                // in the original line so we delete them
+                                helpers.node_info_mut(current_line_container, |info| {
+                                    let stale_nodes = nodes_to_the_right_of_focused.len();
+                                    for _ in 0..stale_nodes {
+                                        info.children.pop();
+                                    }
+                                });
+
+                                input_elem.set_value(upper_split);
+                                input_elem
+                                    .set_selection_start(Some(0))
+                                    .expect("Failed to set input start selection");
+                                input_elem
+                                    .set_selection_end(Some(0))
+                                    .expect("Failed to set input end selection");
 
                                 *state.focused_node_mut() = new_text_node;
                                 *state.document_selection_mut() = Some(RichSelection::mononode(
@@ -1055,6 +1098,12 @@ pub fn RichTextArea() -> Html {
                                         TextSelectionKind::Caret(RichOffset::zero()),
                                     )
                                     .expect("Failed to set text data");
+
+                                let current_line_length = helpers
+                                    .node_info(current_line_container, |info| info.children.len());
+                                if lower_split.is_empty() && current_line_length > 1 {
+                                    helpers.delete_node(focused_node);
+                                }
                             }
                             "ArrowLeft" => {
                                 let text_state = state
@@ -1140,7 +1189,6 @@ pub fn RichTextArea() -> Html {
         let ta_state_handler = state.clone();
         Callback::from(move |event: web_sys::InputEvent| {
             let mut ta_state = ta_state_handler.deref().clone();
-            let helpers = ta_state.document_helpers();
 
             console_log("ON BEFORE INPUT IS BEING FIRED".into());
             console_log(format!("data = \'{}\'", event.data().unwrap_or_default()));
