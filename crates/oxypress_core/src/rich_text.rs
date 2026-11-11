@@ -1,5 +1,5 @@
 use crate::{
-    collections::{flatforest::FlatForest, Ptr},
+    collections::{Ptr, flatforest::FlatForest},
     rich_text_core::RichKind,
 };
 use bitflags::bitflags;
@@ -142,10 +142,10 @@ pub struct RichRange {
     pub end: RichOffset,
 }
 impl RichRange {
-    pub fn from_caret(caret:RichOffset)->Self{
-        Self{
-            start:caret,
-            end:caret,
+    pub fn from_caret(caret: RichOffset) -> Self {
+        Self {
+            start: caret,
+            end: caret,
         }
     }
     pub fn from_str_unbounded(content: &str) -> Self {

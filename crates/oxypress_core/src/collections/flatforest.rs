@@ -397,7 +397,7 @@ impl<Tag, T> FlatForest<Tag, T> {
             return false;
         }
         if (on_root)(self, root) {
-            return true; 
+            return true;
         }
         let child_count = self.get_children(root).len();
         for child_idx in 0..child_count {

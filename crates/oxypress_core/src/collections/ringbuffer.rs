@@ -140,10 +140,14 @@ where
         }
     }
 }
-impl <M> PartialEq for RingBuffer<M>
-    where M:PartialEq
+impl<M> PartialEq for RingBuffer<M>
+where
+    M: PartialEq,
 {
     fn eq(&self, other: &Self) -> bool {
-        self.memory == other.memory && self.len == other.len && self.front ==  other.front && self.rear == other.rear
+        self.memory == other.memory
+            && self.len == other.len
+            && self.front == other.front
+            && self.rear == other.rear
     }
 }

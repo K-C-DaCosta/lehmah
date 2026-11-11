@@ -10,7 +10,7 @@ pub struct Ptr<Tag> {
     _tag: PhantomData<Tag>,
 }
 impl<Tag> Ptr<Tag> {
-    pub fn is_null(&self)->bool{
+    pub fn is_null(&self) -> bool {
         *self == Ptr::null()
     }
 
@@ -66,9 +66,7 @@ impl<Tag> Clone for Ptr<Tag> {
         *self
     }
 }
-impl<Tag> Copy for Ptr<Tag> {
-
-}
+impl<Tag> Copy for Ptr<Tag> {}
 
 impl<Tag> From<usize> for Ptr<Tag> {
     fn from(value: usize) -> Self {
