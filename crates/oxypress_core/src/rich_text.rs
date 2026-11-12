@@ -153,7 +153,7 @@ impl RichRange {
     }
 }
 
-#[derive(Copy, Clone, Default, PartialEq, Debug)]
+#[derive(Copy, Clone, Default, PartialEq, Debug, Hash, Eq)]
 pub struct RichOffset {
     pub utf8: usize,
     pub utf16: usize,
@@ -339,9 +339,9 @@ impl TextAreaState {
     #[track_caller]
     pub fn enqueue_task(
         &mut self,
-        item: DeferredDocumentTask,
+        incoming_task: DeferredDocumentTask,
     ) -> Result<(), crate::collections::ringbuffer::RingError> {
-        self.deferred_tasks.enqueue(item)
+        self.deferred_tasks.enqueue(incoming_task)
     }
     pub fn flush_tasks(&mut self) {
         self.deferred_tasks.clear();
@@ -642,7 +642,8 @@ impl ToolState {
                                 DeferredDocumentTaskKind::InsertNodeAt {
                                     node: selection.start_node,
                                     offset: selection.start_offset,
-                                    dst_style: focused_styling ^ InlineStyling::from(self.kind),
+                                    src_style: focused_styling,
+                                    style_clicked: InlineStyling::from(self.kind),
                                 },
                             ))
                             .expect("Failed to enqueue task");
@@ -960,12 +961,13 @@ pub enum DeferredDocumentTaskKind {
     InsertNodeAt {
         node: Ptr<RichTag>,
         offset: RichOffset,
-        dst_style: InlineStyling,
+        src_style: InlineStyling,
+        style_clicked: InlineStyling,
     },
     NOP,
 }
 
-#[derive(Clone, PartialEq,Debug)]
+#[derive(Clone, PartialEq, Debug)]
 pub enum HiddenInputOp {
     SetSelectionRange {
         start: u32,
@@ -978,7 +980,7 @@ pub enum HiddenInputOp {
     },
 }
 
-#[derive(Clone, PartialEq,Debug)]
+#[derive(Clone, PartialEq, Debug)]
 pub enum Effect {
     HiddenInput(HiddenInputOp),
     ConsoleLog(String),
@@ -1274,4 +1276,128 @@ pub fn apply_notation_styles(styles: InlineStyling, base: String) -> String {
         }
     }
     result
+}
+
+#[derive(Copy, Clone, PartialEq)]
+pub enum CaretDirection {
+    Up,
+    Down,
+    Left,
+    Right,
+}
+impl CaretDirection {
+    pub fn to_sign_vertical(&self) -> f32 {
+        match self {
+            Self::Down => 1.0,
+            Self::Up => -1.0,
+            _ => panic!("Unexpected caret direction"),
+        }
+    }
+    pub fn to_sign_horizontal(&self) -> isize {
+        match self {
+            Self::Left => -1,
+            Self::Right => 1,
+            _ => panic!("Unexpected caret direction"),
+        }
+    }
+}
+fn collect_leaf_nodes(
+    state: &TextAreaState,
+    focused_node: Ptr<RichTag>,
+) -> (Vec<Ptr<RichTag>>, usize) {
+    let helpers = state.document_helpers();
+    enum CollectionState {
+        Start,
+        AfterFocused,
+    }
+    let mut leafs: Vec<Ptr<RichTag>> = vec![];
+    let mut focused_index = !0;
+    let mut iterator_state = CollectionState::Start;
+    const MAX_NODES_AFTER_FOCUS: usize = 3;
+    let mut after_focus_node_count = 0;
+    helpers
+        .forest_mut()
+        .traverse_all_mut(state.document, |forest, root| {
+            let root_kind = forest.get_data(root);
+            if root_kind.is_text_kind() {
+                leafs.push(root);
+            }
+            match iterator_state {
+                CollectionState::Start => {
+                    if root_kind.is_text_kind() && focused_node == root {
+                        focused_index = leafs.len() - 1;
+                        iterator_state = CollectionState::AfterFocused;
+                    }
+                }
+                CollectionState::AfterFocused => {
+                    after_focus_node_count += 1;
+                    if after_focus_node_count >= MAX_NODES_AFTER_FOCUS {
+                        return true;
+                    }
+                }
+            }
+            false
+        });
+    (leafs, focused_index)
+}
+
+pub mod document_operations {
+    use super::*;
+
+    pub fn move_caret_horizontal<'a>(
+        state: &mut TextAreaState,
+        effect_buffer: &'a mut Vec<Effect>,
+        focused_node: Ptr<RichTag>,
+        direction: CaretDirection,
+    ) -> EffectRunner<'a> {
+        let helpers = state.document_helpers();
+        // TODO: The way im collecting leaf nodes isn't optimal
+        // at all, this could be improved, im leaving this alone
+        // because this works for right now
+        let (leaf_list, focused_index) = collect_leaf_nodes(state, focused_node);
+        effect_buffer.push(Effect::ConsoleLog(format!("leaf list = {:?}", leaf_list)));
+        let adjacent_node_idx = focused_index as isize + direction.to_sign_horizontal();
+
+        let is_invalid_adjacent = |adjacent_node_idx: isize| {
+            adjacent_node_idx < 0 || adjacent_node_idx >= leaf_list.len() as isize
+        };
+
+        if is_invalid_adjacent(adjacent_node_idx) {
+            return EffectRunner::with_buffer(effect_buffer);
+        }
+
+        let new_focused_node = leaf_list[adjacent_node_idx as usize];
+        let new_focused_text_state = helpers
+            .try_get_text_state(new_focused_node, |text_state| text_state.clone())
+            .expect("Failed to get text state");
+
+        let caret = match direction {
+            CaretDirection::Right => RichOffset::zero(),
+            CaretDirection::Left => RichOffset::from_utf8_offset(
+                &new_focused_text_state.content,
+                new_focused_text_state.content.len(),
+            ),
+            _ => panic!("Only Left and Right are expected in this routine"),
+        };
+
+        state.flush_overlays();
+        helpers
+            .try_get_extra_text_state_mut(new_focused_node, |extra_text_state| {
+                extra_text_state.selection = TextSelectionKind::Caret(caret);
+            })
+            .expect("Failed to set text selection");
+        effect_buffer.push(Effect::HiddenInput(HiddenInputOp::SetValue(
+            new_focused_text_state.content.clone(),
+        )));
+        effect_buffer.push(Effect::HiddenInput(HiddenInputOp::SetSelectionRange {
+            start: caret.utf8 as u32,
+            end: caret.utf8 as u32,
+        }));
+        *state.focused_node_mut() = new_focused_node;
+        *state.document_selection_mut() = Some(RichSelection::mononode(
+            new_focused_node,
+            RichRange::from_caret(caret),
+        ));
+        EffectRunner::with_buffer(effect_buffer)
+    }
 }
