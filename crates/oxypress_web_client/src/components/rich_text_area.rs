@@ -47,13 +47,10 @@ fn TextAreaTool(p: &TextAreaToolProps) -> Html {
                 .cast::<HtmlInputElement>()
                 .expect("Failed to get hidden input");
             let mut state = parent_state_handler.deref().clone();
-            let effect_buffer = state.effects_buffer.clone();
-            state = state.set_focused_tool(Some(tool_idx));
-            state
-                .execute_tool_by_idx(tool_idx, &mut effect_buffer.borrow_mut())
-                .apply(|effect| {
-                    wasm32_unknown_unknown::effect_handler(effect, hidden_input_elem.clone());
-                });
+            let runner = state
+                .runner(|effect| wasm_syscalls::effect_handler(effect, hidden_input_elem.clone()));
+            state.set_focused_tool(Some(tool_idx));
+            state.execute_tool_by_idx(tool_idx, runner).drain();
             state.trigger_update();
             parent_state_handler.set(state);
         }
@@ -215,20 +212,16 @@ pub fn RichTextArea() -> Html {
                         RichNodeKind::Text(focused_node_state) => match e.key().as_str() {
                             "Backspace" => {}
                             "Enter" => {
-                                let effect_buffer = state.effects_buffer.clone();
+                                let runner = state.runner(|e| {
+                                    wasm_syscalls::effect_handler(e, input_elem.clone())
+                                });
                                 create_new_line_at_caret(
                                     &mut state,
                                     focused_node,
-                                    focused_node_state,
                                     document_selection,
-                                    &mut effect_buffer.borrow_mut(),
+                                    runner.clone(),
                                 )
-                                .apply(|effect| {
-                                    wasm32_unknown_unknown::effect_handler(
-                                        effect,
-                                        input_elem.clone(),
-                                    );
-                                });
+                                .drain();
                             }
                             "ArrowLeft" => {
                                 let text_state = state
@@ -243,19 +236,16 @@ pub fn RichTextArea() -> Html {
                                 if caret_position.is_some()
                                     && caret_position.unwrap() == RichOffset::zero()
                                 {
-                                    let effects_buffer = state.effects_buffer.clone();
+                                    let runner = state.runner(|e| {
+                                        wasm_syscalls::effect_handler(e, input_elem.clone())
+                                    });
                                     document_operations::move_caret_horizontal(
                                         &mut state,
-                                        &mut effects_buffer.borrow_mut(),
+                                        runner,
                                         focused_node,
                                         CaretDirection::Left,
                                     )
-                                    .apply(|effect| {
-                                        wasm32_unknown_unknown::effect_handler(
-                                            effect,
-                                            input_elem.clone(),
-                                        );
-                                    });
+                                    .drain();
                                     e.prevent_default();
                                 }
                             }
@@ -273,19 +263,17 @@ pub fn RichTextArea() -> Html {
                                     && caret_position.unwrap().utf8
                                         == focused_node_state.content.len()
                                 {
-                                    let effects_buffer = state.effects_buffer.clone();
+                                    let runner = state.runner(|e| {
+                                        wasm_syscalls::effect_handler(e, input_elem.clone())
+                                    });
+
                                     document_operations::move_caret_horizontal(
                                         &mut state,
-                                        &mut effects_buffer.borrow_mut(),
+                                        runner,
                                         focused_node,
                                         CaretDirection::Right,
                                     )
-                                    .apply(|effect| {
-                                        wasm32_unknown_unknown::effect_handler(
-                                            effect,
-                                            input_elem.clone(),
-                                        );
-                                    });
+                                    .drain();
                                     e.prevent_default();
                                 }
                             }
@@ -350,22 +338,19 @@ pub fn RichTextArea() -> Html {
                     DeferredDocumentTaskKind::InsertNodeAt {
                         node: head_node,
                         offset,
-                        src_style, 
+                        src_style,
                         style_clicked: destination_style,
                     } => {
-                        
                         accumulated_inserts
                             .entry((head_node, offset))
                             .and_modify(|styling| *styling ^= destination_style)
-                            .or_insert(src_style^destination_style);
+                            .or_insert(src_style ^ destination_style);
                     }
                     DeferredDocumentTaskKind::NOP => {}
                 }
             }
-
             for ((node, offset), accumulated_styles) in accumulated_inserts {
                 event.prevent_default();
-                console_log(format!("accumulated_styles = {:?}", accumulated_styles));
                 inner_operation(
                     &mut ta_state,
                     node,
@@ -515,15 +500,20 @@ fn inner_operation(
     ));
 }
 
-pub fn create_new_line_at_caret<'a>(
-    state: &'a mut TextAreaState,
+pub fn create_new_line_at_caret<F>(
+    state: &mut TextAreaState,
     focused_node: Ptr<RichTag>,
-    focused_node_state: TextState,
     document_selection: RichSelection,
-    effect_buffer: &'a mut Vec<Effect>,
-) -> EffectRunner<'a> {
+    runner: EffectRunner<F>,
+) -> EffectRunner<F>
+where
+    F: EffectExecutionContext,
+{
     let helpers = state.document_helpers();
     let current_line_container = helpers.node_info(focused_node, |info| info.parent);
+    let focused_node_state = helpers
+        .try_get_text_state(focused_node, |ts| ts.clone())
+        .expect("Failed to get focused text state");
     let current_line_children =
         helpers.node_info(current_line_container, |info| info.children.to_vec());
     let focued_node_position_in_line_container = current_line_children
@@ -592,10 +582,10 @@ pub fn create_new_line_at_caret<'a>(
         }
     });
 
-    effect_buffer.push(Effect::HiddenInput(HiddenInputOp::SetValue(
+    runner.push(Effect::HiddenInput(HiddenInputOp::SetValue(
         upper_split.to_string(),
     )));
-    effect_buffer.push(Effect::HiddenInput(HiddenInputOp::SetSelectionRange {
+    runner.push(Effect::HiddenInput(HiddenInputOp::SetSelectionRange {
         start: 0,
         end: 0,
     }));
@@ -643,19 +633,19 @@ pub fn create_new_line_at_caret<'a>(
                 TextSelectionKind::Caret(RichOffset::zero()),
             )
             .expect("Failed to set selection");
-        effect_buffer.push(Effect::HiddenInput(HiddenInputOp::SetValue(
+        runner.push(Effect::HiddenInput(HiddenInputOp::SetValue(
             helpers
                 .try_get_text_state(alt_new_focused_node, |text_state| {
                     text_state.content.clone()
                 })
                 .expect("Failed to get content"),
         )));
-        effect_buffer.push(Effect::HiddenInput(HiddenInputOp::SetSelectionRange {
+        runner.push(Effect::HiddenInput(HiddenInputOp::SetSelectionRange {
             start: 0,
             end: 0,
         }));
     }
-    EffectRunner::with_buffer(effect_buffer)
+    runner
 }
 
 #[derive(Properties, PartialEq)]
@@ -808,11 +798,15 @@ fn RichDisplayNode(p: &RichDisplayNodeProps) -> Html {
                                     update_toolbar_styles(&mut ta_state, node_state.styling);
                                 }
                                 RichSelectionKind::MultiNode => {
-                                    apply_highlights(&ta_state, selection);
-                                    update_toolbar_to_display_common_styles_multinode(
+                                    let effect_buffer = ta_state.runner(|e| {
+                                        wasm_syscalls::effect_handler(e, input.clone())
+                                    });
+                                    document_operations::apply_highlights(&ta_state, selection);
+                                    document_operations::update_toolbar_to_display_common_styles_multinode(
                                         &mut ta_state,
                                         &selection,
-                                    );
+                                        effect_buffer.clone(),
+                                    ).drain();
                                     ta_state.trigger_update();
                                 }
                             }
@@ -908,62 +902,7 @@ fn RichDisplayNode(p: &RichDisplayNodeProps) -> Html {
         }
     }
 }
-pub fn apply_highlights(state: &TextAreaState, selection: RichSelection) {
-    let helpers = state.document_helpers();
-    let highlight_start_node = || {
-        let end_offset = helpers
-            .try_get_text_state(selection.start_node, TextState::get_end_offset)
-            .expect("Failed to get text state");
-        helpers
-            .get_aux_text_state_mut(selection.start_node, |extra_text_state| {
-                extra_text_state
-                    .set_range_selection_with_offsets(selection.start_offset, end_offset)
-            })
-            .expect("Failed to get aux text state");
-    };
-    let highligh_end_node = || {
-        helpers
-            .get_aux_text_state_mut(selection.end_node, |extra_text_state| {
-                extra_text_state
-                    .set_range_selection_with_offsets(RichOffset::zero(), selection.end_offset);
-            })
-            .expect("Failed to get aux text state");
-    };
-    let highlight_in_between_start_and_finish = || {
-        let start_node = selection.start_node;
-        let end_node = selection.end_node;
-        let mut forest_content = state.forest_content.borrow_mut();
 
-        state
-            .forest
-            .borrow_mut()
-            .iter_exclusive_mut(state.document, start_node, end_node)
-            .for_each(|(root, data)| {
-                let full_text_range = data
-                    .as_text()
-                    .map(TextState::get_full_range)
-                    .unwrap_or(RichRange::default());
-
-                // NOTE: DONT SET SELECTIONS FOR EMPTY NODES IT MESSES UP
-                // OVERLAY HIGHLIGHTS
-                let is_empty_node = data
-                    .as_text()
-                    .map(|text_state| text_state.content.is_empty())
-                    .unwrap_or(false);
-
-                if !is_empty_node
-                    && let Some(extra_ts) = forest_content
-                        .get_mut(&root)
-                        .and_then(RichAuxData::as_text_mut)
-                {
-                    extra_ts.set_range_selection(full_text_range);
-                }
-            });
-    };
-    highlight_start_node();
-    highligh_end_node();
-    highlight_in_between_start_and_finish();
-}
 #[track_caller]
 fn compute_document_selection() -> Result<RichSelection, wasm_bindgen::JsValue> {
     let selection = web_sys::window()
@@ -1386,15 +1325,6 @@ fn compute_wrapped_lines_in_text_node(text_node: &web_sys::Node) -> Vec<RichRang
     wrapped_lines
 }
 
-pub fn update_toolbar_to_display_common_styles_multinode(
-    ta_state: &mut TextAreaState,
-    selection: &RichSelection,
-) {
-    let common_selected_styling = compute_common_stylings_in_selection(ta_state, selection);
-    update_toolbar_styles(ta_state, common_selected_styling);
-    console_log(format!("common styles = {:?}", common_selected_styling));
-}
-
 #[derive(Copy, Clone, PartialEq)]
 pub struct RichRect {
     pub x: f32,
@@ -1448,9 +1378,11 @@ impl std::fmt::Display for RichRect {
     }
 }
 
-pub mod wasm32_unknown_unknown {
+pub mod wasm_syscalls {
+    use oxypress_core::rich_text;
+
     use super::*;
-    pub fn effect_handler(effect: &Effect, hidden_input_elem: HtmlInputElement) {
+    pub fn effect_handler(effect: &Effect, hidden_input_elem: HtmlInputElement) -> Option<Command> {
         match effect {
             Effect::HiddenInput(op_kind) => match op_kind {
                 &HiddenInputOp::SetSelectionRange { start, end } => {
@@ -1474,6 +1406,12 @@ pub mod wasm32_unknown_unknown {
             Effect::ConsoleLog(message) => {
                 console_log(message.into());
             }
+            Effect::DocumentSelectionQuery => {
+                return compute_document_selection()
+                    .ok()
+                    .map(rich_text::Command::SelectionQueryResults);
+            }
         }
+        None
     }
 }

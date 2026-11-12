@@ -270,6 +270,7 @@ pub struct TextAreaState {
     pub forest: Rc<RefCell<RichForest>>,
     pub forest_content: Rc<RefCell<RichContentTable>>,
     pub effects_buffer: Rc<RefCell<Vec<Effect>>>,
+    pub commands_buffer: Rc<RefCell<Vec<Command>>>,
     pub document: Ptr<RichTag>,
     pub focused_node: Ptr<RichTag>,
     pub update_counter: usize,
@@ -305,6 +306,7 @@ impl TextAreaState {
             update_counter: 0,
             document_selection: None,
             effects_buffer: Rc::new(RefCell::new(Vec::new())),
+            commands_buffer: Rc::new(RefCell::new(Vec::new())),
             deferred_tasks: RingBuffer::with_backing(std::array::from_fn(|_| {
                 DeferredDocumentTask::with_kind(DeferredDocumentTaskKind::NOP)
             })),
@@ -336,6 +338,17 @@ impl TextAreaState {
         self
     }
 
+    pub fn runner<F>(&self, executor: F) -> EffectRunner<F>
+    where
+        F: EffectExecutionContext,
+    {
+        EffectRunner::with_buffers_and_executor(
+            self.effects_buffer.clone(),
+            self.commands_buffer.clone(),
+            executor,
+        )
+    }
+
     #[track_caller]
     pub fn enqueue_task(
         &mut self,
@@ -347,9 +360,8 @@ impl TextAreaState {
         self.deferred_tasks.clear();
     }
 
-    pub fn set_focused_tool(mut self, tool_idx: Option<usize>) -> Self {
+    pub fn set_focused_tool(&mut self, tool_idx: Option<usize>) {
         self.focused_tool = tool_idx;
-        self
     }
 
     pub fn trigger_update(&mut self) {
@@ -386,16 +398,19 @@ impl TextAreaState {
         *self.document_selection_mut() = None;
     }
 
-    pub fn execute_tool_by_idx<'a>(
+    pub fn execute_tool_by_idx<F>(
         &mut self,
         tool_idx: usize,
-        effects_buffer: &'a mut Vec<Effect>,
-    ) -> EffectRunner<'a> {
+        runner: EffectRunner<F>,
+    ) -> EffectRunner<F>
+    where
+        F: EffectExecutionContext,
+    {
         let mut local_tool_state = self.tools[tool_idx].clone();
-        local_tool_state.execute(self, tool_idx, effects_buffer);
+        local_tool_state.execute(self, tool_idx, &runner);
         //update state with potentially mutated values
         self.tools[tool_idx] = local_tool_state;
-        EffectRunner::with_buffer(effects_buffer)
+        runner
     }
 
     pub fn document_helpers(&self) -> RichDocumentHelpers {
@@ -597,18 +612,21 @@ impl ToolState {
         self
     }
 
-    pub fn execute(
+    pub fn execute<F>(
         &mut self,
         ta_state: &mut TextAreaState,
         tool_idx: usize,
-        effect_buffer: &mut Vec<Effect>,
-    ) -> Option<()> {
+        runner: &EffectRunner<F>,
+    ) -> Option<()>
+    where
+        F: EffectExecutionContext,
+    {
         let helpers = ta_state.document_helpers();
         match self.kind {
             ToolKind::Bold | ToolKind::Italics | ToolKind::Underline => {
                 let selection = ta_state.document_selection()?;
                 let focused_node = ta_state.focused_node;
-                effect_buffer.push(Effect::ConsoleLog(format!(
+                runner.push(Effect::ConsoleLog(format!(
                     "selection = {:?},focused node ={:?}",
                     selection, focused_node
                 )));
@@ -616,7 +634,7 @@ impl ToolState {
                     RichSelectionKind::MonoNode(RichCharacterRangeKind::MultiCharacter) => {
                         let clipped_node = self.apply_tool_styling_mononode(
                             ta_state,
-                            effect_buffer,
+                            runner,
                             selection,
                             styling_ops::toggle_style,
                         );
@@ -648,7 +666,7 @@ impl ToolState {
                             ))
                             .expect("Failed to enqueue task");
                         self.toggle_selection();
-                        effect_buffer.push(Effect::HiddenInput(HiddenInputOp::Focus {
+                        runner.push(Effect::HiddenInput(HiddenInputOp::Focus {
                             prevent_scroll: true,
                             focus_visible: true,
                         }));
@@ -688,7 +706,7 @@ impl ToolState {
                                     .get(&ptr)
                                     .and_then(|aux_data| aux_data.as_text())
                                     .and_then(|extra_text_state| {
-                                        effect_buffer.push(Effect::ConsoleLog(format!(
+                                        runner.push(Effect::ConsoleLog(format!(
                                             "Current selection = {:?}",
                                             extra_text_state.selection
                                         )));
@@ -709,7 +727,7 @@ impl ToolState {
                                 let mononode_selection = RichSelection::mononode(ptr, range);
                                 self.apply_tool_styling_mononode(
                                     ta_state,
-                                    effect_buffer,
+                                    runner,
                                     mononode_selection,
                                     |tool_state, current_styling| {
                                         let tool_style = InlineStyling::from(tool_state.kind);
@@ -766,15 +784,16 @@ impl ToolState {
         self.is_selected = !self.is_selected;
     }
 
-    fn apply_tool_styling_mononode<'a, F>(
+    fn apply_tool_styling_mononode<'a, StylingCb, EffectCb>(
         &'a self,
         ta_state: &mut TextAreaState,
-        effect_buffer: &mut Vec<Effect>,
+        runner: &EffectRunner<EffectCb>,
         selection: RichSelection,
-        styling_op: F,
+        styling_op: StylingCb,
     ) -> ClippedNodeInfo
     where
-        F: Fn(&'a Self, InlineStyling) -> InlineStyling,
+        StylingCb: Fn(&'a Self, InlineStyling) -> InlineStyling,
+        EffectCb: EffectExecutionContext,
     {
         let helpers = ta_state.document_helpers();
 
@@ -862,13 +881,13 @@ impl ToolState {
                 if node_content.is_empty() {
                     helpers.delete_node(node_ptr);
                     if node_ptr == middle_node {
-                        effect_buffer.push(Effect::ConsoleLog(
+                        runner.push(Effect::ConsoleLog(
                             "WARNING MIDDLE NODE IS BEING DELETED!!!".into(),
                         ));
-                        effect_buffer.push(Effect::ConsoleLog(format!(
+                        runner.push(Effect::ConsoleLog(format!(
                             "selected content = \'{selected_content}\'"
                         )));
-                        effect_buffer.push(Effect::ConsoleLog(format!(
+                        runner.push(Effect::ConsoleLog(format!(
                             "head = \'{head}\' middle = \'{middle}\' tail =\'{tail}\'"
                         )));
                     }
@@ -984,27 +1003,56 @@ pub enum HiddenInputOp {
 pub enum Effect {
     HiddenInput(HiddenInputOp),
     ConsoleLog(String),
+    DocumentSelectionQuery,
 }
-pub struct EffectRunner<'a> {
-    effect_buffer: &'a mut Vec<Effect>,
+
+#[derive(Clone, PartialEq, Debug)]
+pub enum Command {
+    SelectionQueryResults(RichSelection),
 }
-impl<'a> EffectRunner<'a> {
-    pub fn with_buffer(buffer: &'a mut Vec<Effect>) -> Self {
+
+pub trait EffectExecutionContext: FnMut(&Effect) -> Option<Command> {}
+impl<T> EffectExecutionContext for T where T: FnMut(&Effect) -> Option<Command> {}
+
+#[derive(Clone)]
+pub struct EffectRunner<F> {
+    effect_buffer: Rc<RefCell<Vec<Effect>>>,
+    command_buffer: Rc<RefCell<Vec<Command>>>,
+    apply: F,
+}
+
+impl<F> EffectRunner<F>
+where
+    F: EffectExecutionContext,
+{
+    pub fn with_buffers_and_executor(
+        effect_buffer: Rc<RefCell<Vec<Effect>>>,
+        command_buffer: Rc<RefCell<Vec<Command>>>,
+        apply: F,
+    ) -> Self {
         Self {
-            effect_buffer: buffer,
+            effect_buffer,
+            command_buffer,
+            apply,
         }
     }
-    pub fn apply<F>(&mut self, mut apply_effect: F)
-    where
-        F: FnMut(&Effect),
-    {
-        for effect in self.effect_buffer.iter() {
-            apply_effect(effect);
+
+    pub fn drain(mut self) {
+        for effect in self.effect_buffer.borrow_mut().drain(..) {
+            if let Some(cmd) = (self.apply)(&effect) {}
         }
-        self.effect_buffer.clear();
+    }
+
+    pub fn poll(&mut self, effect: Effect) -> Option<Command> {
+        (self.apply)(&effect)
     }
 }
 
+impl<F> EffectRunner<F> {
+    pub fn push(&self, effect: Effect) {
+        self.effect_buffer.borrow_mut().push(effect);
+    }
+}
 pub struct NodeInfo<'a> {
     pub parent: Ptr<RichTag>,
     pub children: &'a Vec<Ptr<RichTag>>,
@@ -1343,19 +1391,94 @@ fn collect_leaf_nodes(
 
 pub mod document_operations {
     use super::*;
+    pub fn update_toolbar_to_display_common_styles_multinode<F>(
+        ta_state: &mut TextAreaState,
+        selection: &RichSelection,
+        runner: EffectRunner<F>,
+    ) -> EffectRunner<F>
+    where
+        F: EffectExecutionContext,
+    {
+        let common_selected_styling = compute_common_stylings_in_selection(ta_state, selection);
+        update_toolbar_styles(ta_state, common_selected_styling);
+        runner.push(Effect::ConsoleLog(format!(
+            "common styles = {:?}",
+            common_selected_styling
+        )));
+        runner
+    }
+    pub fn apply_highlights(state: &TextAreaState, selection: RichSelection) {
+        let helpers = state.document_helpers();
+        let highlight_start_node = || {
+            let end_offset = helpers
+                .try_get_text_state(selection.start_node, TextState::get_end_offset)
+                .expect("Failed to get text state");
+            helpers
+                .get_aux_text_state_mut(selection.start_node, |extra_text_state| {
+                    extra_text_state
+                        .set_range_selection_with_offsets(selection.start_offset, end_offset)
+                })
+                .expect("Failed to get aux text state");
+        };
+        let highligh_end_node = || {
+            helpers
+                .get_aux_text_state_mut(selection.end_node, |extra_text_state| {
+                    extra_text_state
+                        .set_range_selection_with_offsets(RichOffset::zero(), selection.end_offset);
+                })
+                .expect("Failed to get aux text state");
+        };
+        let highlight_in_between_start_and_finish = || {
+            let start_node = selection.start_node;
+            let end_node = selection.end_node;
+            let mut forest_content = state.forest_content.borrow_mut();
 
-    pub fn move_caret_horizontal<'a>(
+            state
+                .forest
+                .borrow_mut()
+                .iter_exclusive_mut(state.document, start_node, end_node)
+                .for_each(|(root, data)| {
+                    let full_text_range = data
+                        .as_text()
+                        .map(TextState::get_full_range)
+                        .unwrap_or(RichRange::default());
+
+                    // NOTE: DONT SET SELECTIONS FOR EMPTY NODES IT MESSES UP
+                    // OVERLAY HIGHLIGHTS
+                    let is_empty_node = data
+                        .as_text()
+                        .map(|text_state| text_state.content.is_empty())
+                        .unwrap_or(false);
+
+                    if !is_empty_node
+                        && let Some(extra_ts) = forest_content
+                            .get_mut(&root)
+                            .and_then(RichAuxData::as_text_mut)
+                    {
+                        extra_ts.set_range_selection(full_text_range);
+                    }
+                });
+        };
+        highlight_start_node();
+        highligh_end_node();
+        highlight_in_between_start_and_finish();
+    }
+
+    pub fn move_caret_horizontal<F>(
         state: &mut TextAreaState,
-        effect_buffer: &'a mut Vec<Effect>,
+        runner: EffectRunner<F>,
         focused_node: Ptr<RichTag>,
         direction: CaretDirection,
-    ) -> EffectRunner<'a> {
+    ) -> EffectRunner<F>
+    where
+        F: EffectExecutionContext,
+    {
         let helpers = state.document_helpers();
         // TODO: The way im collecting leaf nodes isn't optimal
         // at all, this could be improved, im leaving this alone
         // because this works for right now
         let (leaf_list, focused_index) = collect_leaf_nodes(state, focused_node);
-        effect_buffer.push(Effect::ConsoleLog(format!("leaf list = {:?}", leaf_list)));
+        runner.push(Effect::ConsoleLog(format!("leaf list = {:?}", leaf_list)));
         let adjacent_node_idx = focused_index as isize + direction.to_sign_horizontal();
 
         let is_invalid_adjacent = |adjacent_node_idx: isize| {
@@ -1363,7 +1486,7 @@ pub mod document_operations {
         };
 
         if is_invalid_adjacent(adjacent_node_idx) {
-            return EffectRunner::with_buffer(effect_buffer);
+            return runner;
         }
 
         let new_focused_node = leaf_list[adjacent_node_idx as usize];
@@ -1386,10 +1509,10 @@ pub mod document_operations {
                 extra_text_state.selection = TextSelectionKind::Caret(caret);
             })
             .expect("Failed to set text selection");
-        effect_buffer.push(Effect::HiddenInput(HiddenInputOp::SetValue(
+        runner.push(Effect::HiddenInput(HiddenInputOp::SetValue(
             new_focused_text_state.content.clone(),
         )));
-        effect_buffer.push(Effect::HiddenInput(HiddenInputOp::SetSelectionRange {
+        runner.push(Effect::HiddenInput(HiddenInputOp::SetSelectionRange {
             start: caret.utf8 as u32,
             end: caret.utf8 as u32,
         }));
@@ -1398,6 +1521,6 @@ pub mod document_operations {
             new_focused_node,
             RichRange::from_caret(caret),
         ));
-        EffectRunner::with_buffer(effect_buffer)
+        runner
     }
 }
