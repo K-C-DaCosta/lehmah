@@ -5,11 +5,7 @@ use oxypress_core::{
         ringbuffer::{RingBuffer, RingError},
         Ptr,
     },
-    rich_text::{
-        ExtraTextState, InlineStyling, RichAuxData, RichCharacterRangeKind, RichContentTable,
-        RichForest, RichNodeKind, RichOffset, RichRange, RichSelection, RichSelectionDebugInfo,
-        RichSelectionKind, RichTag, TextSelectionKind, TextState,
-    },
+    rich_text::*,
 };
 use std::{cell::RefCell, collections::HashMap, ops::Deref, panic::Location, rc::Rc};
 use web_sys::{
@@ -19,882 +15,6 @@ use web_sys::{
 use yew::{html::Html, platform::fmt::buffer, prelude::*};
 
 use crate::entry_point::console_log;
-
-#[allow(unused)]
-const ZERO_WIDTH_SPACE: &str = "\u{200B}";
-
-#[derive(Copy, Clone)]
-pub struct ClippedNodeInfo {
-    node: Ptr<RichTag>,
-    range: RichRange,
-}
-#[derive(Copy, Clone, PartialEq)]
-pub enum ToolKind {
-    Bold,
-    Italics,
-    Underline,
-    Unimplemented,
-}
-impl From<ToolKind> for InlineStyling {
-    fn from(value: ToolKind) -> Self {
-        match value {
-            ToolKind::Underline => Self::UNDERLINE,
-            ToolKind::Bold => Self::BOLD,
-            ToolKind::Italics => Self::ITALICS,
-            _ => panic!("Unhandled conversion failed to convert ToolKind"),
-        }
-    }
-}
-#[derive(PartialEq, Clone)]
-pub struct ToolState {
-    name: AttrValue,
-    css_icon: AttrValue,
-    is_selected: bool,
-    kind: ToolKind,
-}
-impl ToolState {
-    pub fn new() -> Self {
-        Self {
-            name: AttrValue::Static(""),
-            css_icon: AttrValue::Static(""),
-            is_selected: false,
-            kind: ToolKind::Unimplemented,
-        }
-    }
-
-    pub fn with_name(mut self, name: &'static str) -> Self {
-        self.name = AttrValue::Static(name);
-        self
-    }
-
-    pub fn with_css_icon(mut self, css_icon: &'static str) -> Self {
-        self.css_icon = AttrValue::Static(css_icon);
-        self
-    }
-
-    pub fn with_tool_kind(mut self, kind: ToolKind) -> Self {
-        self.kind = kind;
-        self
-    }
-
-    pub fn execute(
-        &mut self,
-        ta_state: &mut TextAreaState,
-        tool_idx: usize,
-        input_ref: &NodeRef,
-    ) -> Option<()> {
-        let helpers = ta_state.document_helpers();
-        match self.kind {
-            ToolKind::Bold | ToolKind::Italics | ToolKind::Underline => {
-                let selection = ta_state.document_selection()?;
-                let focused_node = ta_state.focused_node;
-                console_log(format!(
-                    "selection = {:?},focused node ={:?}",
-                    selection, focused_node
-                ));
-                match selection.kind() {
-                    RichSelectionKind::MonoNode(RichCharacterRangeKind::MultiCharacter) => {
-                        let clipped_node = self.apply_tool_styling_mononode(
-                            ta_state,
-                            selection,
-                            styling_ops::toggle_style,
-                        );
-                        *ta_state.document_selection_mut() = Some(RichSelection::mononode(
-                            clipped_node.node,
-                            clipped_node.range,
-                        ));
-                        helpers
-                            .try_get_extra_text_state_mut(clipped_node.node, |extra_text_state| {
-                                extra_text_state.selection =
-                                    TextSelectionKind::Range(clipped_node.range)
-                            })
-                            .expect("Failed to get extra text state");
-
-                        self.toggle_selection();
-                    }
-                    RichSelectionKind::MonoNode(RichCharacterRangeKind::MonoCharacter) => {
-                        let focused_styling = helpers
-                            .try_get_text_state(focused_node, |text_state| text_state.styling)
-                            .expect("Failed to get text styling");
-                        ta_state
-                            .enqueue_task(DeferredDocumentTask::with_kind(
-                                DeferredDocumentTaskKind::InsertNodeAt {
-                                    node: selection.start_node,
-                                    offset: selection.start_offset,
-                                    dst_style: focused_styling ^ InlineStyling::from(self.kind),
-                                },
-                            ))
-                            .expect("Failed to enqueue task");
-                        self.toggle_selection();
-                        let hidden_input_element = input_ref
-                            .cast::<HtmlInputElement>()
-                            .expect("Failed to get hidden input element");
-
-                        let focus_options = web_sys::FocusOptions::new();
-                        focus_options.set_prevent_scroll(true);
-                        focus_options.set_focus_visible(true);
-                        hidden_input_element
-                            .focus_with_options(&focus_options)
-                            .expect("Failed to focus to hidden input");
-                    }
-                    RichSelectionKind::MultiNode => {
-                        let common_styles =
-                            compute_common_stylings_in_selection(ta_state, &selection);
-
-                        let keep_non_empty_text_nodes =
-                            |(_, kind): &(Ptr<RichTag>, &mut RichNodeKind)| {
-                                kind.is_text_kind() && !kind.as_text().unwrap().content.is_empty()
-                            };
-
-                        // NOTE: SOMETIMES `compute_document_selection(..)` have `start` and `end`
-                        // ranges that select NO text in that range. `apply_tool_styling_mononode(..)`
-                        // doesn't expect ranges with zero text actually being selected
-                        let keep_non_empty_ranges =
-                            |(_ptr, range, data): &(Ptr<RichTag>, RichRange, &mut RichNodeKind)| {
-                                let text_state = data.as_text().expect("Failed to get text_state");
-                                let selected_content =
-                                    &text_state.content[range.start.utf8..range.end.utf8];
-                                !selected_content.is_empty()
-                            };
-
-                        let selection_list = ta_state
-                            .forest
-                            .borrow_mut()
-                            .iter_inclusive_mut(
-                                ta_state.document,
-                                selection.start_node,
-                                selection.end_node,
-                            )
-                            .filter(keep_non_empty_text_nodes)
-                            .map(|(ptr, data)| {
-                                let range = helpers
-                                    .forest_content()
-                                    .get(&ptr)
-                                    .and_then(|aux_data| aux_data.as_text())
-                                    .and_then(|extra_text_state| {
-                                        console_log(format!(
-                                            "Current selection = {:?}",
-                                            extra_text_state.selection
-                                        ));
-                                        extra_text_state.selection.as_range()
-                                    })
-                                    .unwrap_or_else(|| {
-                                        panic!("Failed to get selection range at ptr={}", ptr)
-                                    });
-                                (ptr, range, data)
-                            })
-                            .filter(keep_non_empty_ranges)
-                            .map(|(ptr, range, _)| (ptr, range))
-                            .collect::<Vec<_>>();
-                        let clipped_list = selection_list
-                            .iter()
-                            .copied()
-                            .map(|(ptr, range)| {
-                                let mononode_selection = RichSelection::mononode(ptr, range);
-                                self.apply_tool_styling_mononode(
-                                    ta_state,
-                                    mononode_selection,
-                                    |tool_state, current_styling| {
-                                        let tool_style = InlineStyling::from(tool_state.kind);
-                                        if common_styles.contains(tool_style) {
-                                            current_styling ^ tool_style
-                                        } else {
-                                            current_styling | tool_style
-                                        }
-                                    },
-                                )
-                            })
-                            .collect::<Vec<_>>();
-                        for clipped_node in clipped_list.iter() {
-                            helpers
-                                .forest_content_mut()
-                                .get_mut(&clipped_node.node)
-                                .and_then(RichAuxData::as_text_mut)
-                                .expect("Failed to get aux text data")
-                                .selection = TextSelectionKind::Range(clipped_node.range);
-                        }
-                        let start_clipped = clipped_list
-                            .first()
-                            .copied()
-                            .expect("Failed to get first clipped node");
-                        let end_clipped = clipped_list
-                            .last()
-                            .copied()
-                            .expect("Failed to get last clipped node");
-                        let new_selection = RichSelection::multinode(
-                            start_clipped.node,
-                            end_clipped.node,
-                            RichOffset::zero(),
-                            end_clipped.range.end,
-                        );
-                        *ta_state.document_selection_mut() = Some(new_selection);
-
-                        update_toolbar_styles(
-                            ta_state,
-                            compute_common_stylings_in_selection(ta_state, &new_selection),
-                        );
-
-                        let mut sync_global_state_with_local_state = || {
-                            *self = ta_state.tools[tool_idx].clone();
-                        };
-                        sync_global_state_with_local_state();
-                    }
-                }
-            }
-            ToolKind::Unimplemented => {}
-        }
-        None
-    }
-    pub fn toggle_selection(&mut self) {
-        self.is_selected = !self.is_selected;
-    }
-
-    fn apply_tool_styling_mononode<'a, F>(
-        &'a self,
-        ta_state: &mut TextAreaState,
-        selection: RichSelection,
-        styling_op: F,
-    ) -> ClippedNodeInfo
-    where
-        F: Fn(&'a Self, InlineStyling) -> InlineStyling,
-    {
-        let helpers = ta_state.document_helpers();
-
-        let selected_node = selection.start_node;
-        let selected_node_parent = *ta_state.forest.borrow().get_parent(selected_node);
-        let selected_node_state = ta_state
-            .forest
-            .borrow()
-            .get_data(selected_node)
-            .as_text()
-            .cloned()
-            .expect("Failed to get text state");
-        let selected_content = &selected_node_state.content;
-
-        let RangeSplitContents {
-            head,
-            selected: middle,
-            tail,
-        } = RichDocumentHelpers::split_content_mono(selected_content, selection)
-            .expect("Failed to split mono")
-            .as_range_split()
-            .expect("Failed to get range split");
-
-        let old_styling = selected_node_state.styling;
-        let new_styling = styling_op(self, old_styling); //
-
-        helpers
-            .try_get_text_state_mut(selected_node, |text_state| {
-                text_state.content.clear();
-                text_state.content.push_str(head);
-                text_state.styling = old_styling;
-            })
-            .expect("Failed to get text_state");
-        helpers
-            .try_get_extra_text_state_mut(selected_node, |extra_state| {
-                extra_state.selection = TextSelectionKind::Unselected;
-            })
-            .expect("Failed to get extra text state");
-
-        let middle_node = helpers.create_text_node(
-            TextState {
-                content: String::from(middle),
-                styling: new_styling,
-            },
-            ExtraTextState {
-                selection: TextSelectionKind::Unselected,
-            },
-        );
-
-        ta_state.forest.borrow_mut().add_child_at(
-            selected_node_parent,
-            middle_node,
-            selected_node,
-            1,
-        );
-        let tail_node = helpers.create_text_node(
-            TextState {
-                content: String::from(tail),
-                styling: old_styling,
-            },
-            ExtraTextState {
-                selection: TextSelectionKind::Unselected,
-            },
-        );
-
-        ta_state
-            .forest
-            .borrow_mut()
-            .add_child_at(selected_node_parent, tail_node, middle_node, 1);
-
-        // some of the text nodes created can be
-        // completely empty and needs to be pruned
-        // from the document
-        let clean_up_list = [
-            (head, selected_node),
-            (middle, middle_node),
-            (tail, tail_node),
-        ];
-
-        clean_up_list
-            .iter()
-            .rev()
-            .copied()
-            .for_each(|(node_content, node_ptr)| {
-                if node_content.is_empty() {
-                    helpers.delete_node(node_ptr);
-                    if node_ptr == middle_node {
-                        console_log("WARNING MIDDLE NODE IS BEING DELETED!!!".into());
-                        console_log(format!("selected content = \'{selected_content}\'"));
-                        console_log(format!(
-                            "head = \'{head}\' middle = \'{middle}\' tail =\'{tail}\'"
-                        ));
-                    }
-                }
-            });
-
-        /*let children = ta_state
-            .forest
-            .borrow()
-            .get_children(selected_node_parent)
-            .clone();
-        console_log(format!("parent child len = {}", children.len()));*/
-        ClippedNodeInfo {
-            node: middle_node,
-            range: RichRange::from_str_unbounded(middle),
-        }
-    }
-}
-
-pub mod styling_ops {
-    use super::ToolState;
-    use oxypress_core::rich_text::InlineStyling;
-
-    pub fn toggle_style(
-        selected_tool_state: &ToolState,
-        old_styling: InlineStyling,
-    ) -> InlineStyling {
-        old_styling ^ InlineStyling::from(selected_tool_state.kind)
-    }
-}
-
-impl Default for ToolState {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-#[derive(Copy, Clone, PartialEq)]
-pub struct DeferredDocumentTask {
-    created_at: panic::Location<'static>,
-    task_kind: DeferredDocumentTaskKind,
-}
-impl DeferredDocumentTask {
-    #[track_caller]
-    pub fn with_kind(kind: DeferredDocumentTaskKind) -> Self {
-        let location = Location::caller();
-        Self {
-            created_at: *location,
-            task_kind: kind,
-        }
-    }
-}
-
-#[derive(Copy, Clone, PartialEq)]
-pub enum DeferredDocumentTaskKind {
-    InsertNodeAt {
-        node: Ptr<RichTag>,
-        offset: RichOffset,
-        dst_style: InlineStyling,
-    },
-    NOP,
-}
-
-#[derive(Clone, PartialEq)]
-pub enum HiddenInputOp {
-    SetSelectionRange { start: u32, end: u32 },
-    SetValue(String),
-}
-
-#[derive(Clone, PartialEq)]
-pub enum Effect {
-    HiddenInput(HiddenInputOp),
-}
-
-#[derive(Clone, PartialEq)]
-pub struct TextAreaState {
-    focused_tool: Option<usize>,
-    tools: Vec<ToolState>,
-    forest: Rc<RefCell<RichForest>>,
-    forest_content: Rc<RefCell<RichContentTable>>,
-    effects_buffer: Rc<RefCell<Vec<Effect>>>,
-    document: Ptr<RichTag>,
-    focused_node: Ptr<RichTag>,
-    update_counter: usize,
-    document_selection: Option<RichSelection>,
-    deferred_tasks: RingBuffer<[DeferredDocumentTask; 16]>,
-}
-impl TextAreaState {
-    pub fn new() -> Self {
-        Self {
-            focused_tool: None,
-            tools: vec![
-                ToolState::new()
-                    .with_name("bold-tool")
-                    .with_css_icon("gg-format-bold")
-                    .with_tool_kind(ToolKind::Bold),
-                ToolState::new()
-                    .with_name("italics-tool")
-                    .with_css_icon("gg-format-italic")
-                    .with_tool_kind(ToolKind::Italics),
-                ToolState::new()
-                    .with_name("underline-tool")
-                    .with_css_icon("gg-format-underline")
-                    .with_tool_kind(ToolKind::Underline),
-                ToolState::new()
-                    .with_name("list-tool")
-                    .with_css_icon("gg-layout-list"),
-            ],
-            forest: Rc::new(RefCell::new(RichForest::new())),
-            forest_content: Rc::new(RefCell::new(RichContentTable::new())),
-            document: Ptr::null(),
-            focused_node: Ptr::null(),
-            update_counter: 0,
-            document_selection: None,
-            effects_buffer: Rc::new(RefCell::new(Vec::new())),
-            deferred_tasks: RingBuffer::with_backing(std::array::from_fn(|_| {
-                DeferredDocumentTask::with_kind(DeferredDocumentTaskKind::NOP)
-            })),
-        }
-    }
-    pub fn with_sample_document(mut self) -> Self {
-        /* Hardcoded AST:
-         * --------------
-         *  Document
-         *  ..Line
-         *  ....Text('HELLO WORLD'|Bold)
-         * */
-        let sample_text = "Hello World";
-        let helpers = self.document_helpers();
-        let document = helpers.create_document_node();
-        let line_container = helpers.create_line_node();
-        let text_node = helpers.create_text_node(
-            TextState {
-                content: String::from(sample_text),
-                styling: InlineStyling::BOLD,
-            },
-            ExtraTextState {
-                selection: TextSelectionKind::Caret(RichOffset::from_utf8_offset(sample_text, 5)),
-            },
-        );
-        helpers.forest_mut().add_child(document, line_container);
-        helpers.forest_mut().add_child(line_container, text_node);
-        self.document = document;
-        self
-    }
-
-    #[track_caller]
-    pub fn enqueue_task(
-        &mut self,
-        item: DeferredDocumentTask,
-    ) -> Result<(), oxypress_core::collections::ringbuffer::RingError> {
-        self.deferred_tasks.enqueue(item)
-    }
-    pub fn flush_tasks(&mut self) {
-        self.deferred_tasks.clear();
-    }
-
-    pub fn set_focused_tool(mut self, tool_idx: Option<usize>) -> Self {
-        self.focused_tool = tool_idx;
-        self
-    }
-
-    pub fn trigger_update(&mut self) {
-        self.update_counter += 1;
-    }
-
-    pub fn focused_node(&self) -> &Ptr<RichTag> {
-        &self.focused_node
-    }
-
-    pub fn focused_node_mut(&mut self) -> &mut Ptr<RichTag> {
-        &mut self.focused_node
-    }
-
-    pub fn flush_overlays(&self) {
-        let document = self.document;
-        {
-            let forest = &mut *self.forest.borrow_mut();
-            let forest_content = &mut *self.forest_content.borrow_mut();
-            forest.traverse_all_mut(document, |forest, node| {
-                if let RichNodeKind::Text(_text_state) = forest.get_data(node) {
-                    let text_node_state = forest_content
-                        .get_mut(&node)
-                        .and_then(RichAuxData::as_text_mut)
-                        .expect("Failed to fetch text-node content");
-                    text_node_state.selection = TextSelectionKind::Unselected;
-                }
-                false
-            });
-        }
-    }
-
-    pub fn clear_document_selection(&mut self) {
-        *self.document_selection_mut() = None;
-    }
-
-    pub fn execute_tool_by_idx(&mut self, tool_idx: usize, input_ref: &NodeRef) {
-        let mut local_tool_state = self.tools[tool_idx].clone();
-        local_tool_state.execute(self, tool_idx, input_ref);
-        //update state with potentially mutated values
-        self.tools[tool_idx] = local_tool_state;
-    }
-
-    pub fn document_helpers(&self) -> RichDocumentHelpers {
-        RichDocumentHelpers {
-            document: self.document,
-            forest: self.forest.clone(),
-            forest_content: self.forest_content.clone(),
-        }
-    }
-
-    pub fn document_selection(&self) -> Option<RichSelection> {
-        self.document_selection
-    }
-
-    #[track_caller]
-    pub fn document_selection_mut(&mut self) -> &mut Option<RichSelection> {
-        let location = Location::caller();
-        console_log(format!("selection last mutated from ={}", location));
-        &mut self.document_selection
-    }
-
-    pub fn run_effects<F>(effect_buffer: &mut Vec<Effect>, mut apply_effect: F)
-    where
-        F: FnMut(&Effect),
-    {
-        for effect in effect_buffer.iter() {
-            apply_effect(effect);
-        }
-        effect_buffer.clear();
-    }
-
-    pub fn to_notation(&self) -> String {
-        let mut notation_buffer = String::new();
-        let helper = self.document_helpers();
-        Self::to_notation_helper(&helper, self.document, &mut notation_buffer);
-        notation_buffer
-    }
-    fn to_notation_helper(helper: &RichDocumentHelpers, root: Ptr<RichTag>, output: &mut String) {
-        if root.is_null() {
-            return;
-        }
-        let node_kind = helper.try_node_data(root, |kind| kind.clone());
-        let child_len = helper.node_info(root, |info| info.children.len());
-        match node_kind {
-            RichNodeKind::Document => {
-                output.push_str("<doc>");
-                for child_idx in 0..child_len {
-                    let child_ptr = helper.node_info(root, |info| info.children[child_idx]);
-                    Self::to_notation_helper(helper, child_ptr, output);
-                }
-                output.push_str("</doc>");
-            }
-            RichNodeKind::Line => {
-                output.push_str("<line>");
-                for child_idx in 0..child_len {
-                    let child_ptr = helper.node_info(root, |info| info.children[child_idx]);
-                    Self::to_notation_helper(helper, child_ptr, output);
-                }
-                output.push_str("</line>");
-            }
-            RichNodeKind::Text(text_state) => {
-                let extra_text_state = helper
-                    .try_get_extra_text_state(root, |extra_text_state| extra_text_state.clone())
-                    .expect("Failed to get extra state");
-                output.push_str("<text>");
-                match extra_text_state.selection {
-                    TextSelectionKind::Caret(pos) => {
-                        let lower = &text_state.content[0..pos.utf8];
-                        let upper = &text_state.content[pos.utf8..];
-                        output.push_str(lower);
-                        output.push('|');
-                        output.push_str(upper);
-                    }
-                    TextSelectionKind::Unselected => {
-                        output.push_str(text_state.content.as_str());
-                    }
-                    TextSelectionKind::Range(range) => {
-                        let head = &text_state.content[..range.start.utf8];
-                        let selected = &text_state.content[range.start.utf8..range.end.utf8];
-                        let tail = &text_state.content[range.end.utf8..];
-                        output.push_str(head);
-                        output.push('[');
-                        output.push_str(selected);
-                        output.push(']');
-                        output.push_str(tail);
-                    }
-                }
-                output.push_str("</text>");
-            }
-        }
-    }
-}
-
-pub struct NodeInfo<'a> {
-    pub parent: Ptr<RichTag>,
-    pub children: &'a Vec<Ptr<RichTag>>,
-}
-pub struct NodeInfoMut<'a> {
-    pub parent: Ptr<RichTag>,
-    pub children: &'a mut Vec<Ptr<RichTag>>,
-}
-
-pub struct RichDocumentHelpers {
-    pub document: Ptr<RichTag>,
-    pub forest: Rc<RefCell<RichForest>>,
-    pub forest_content: Rc<RefCell<RichContentTable>>,
-}
-
-#[derive(Copy, Clone)]
-pub struct CaretSplitContents<'a> {
-    pub left: &'a str,
-    pub right: &'a str,
-}
-
-#[derive(Copy, Clone)]
-pub struct RangeSplitContents<'a> {
-    pub head: &'a str,
-    pub selected: &'a str,
-    pub tail: &'a str,
-}
-pub enum SplitKind<'a> {
-    CaretSplit(CaretSplitContents<'a>),
-    RangeSplit(RangeSplitContents<'a>),
-}
-impl<'a> SplitKind<'a> {
-    pub fn as_caret_split(&self) -> Option<CaretSplitContents<'a>> {
-        if let Self::CaretSplit(contents) = self {
-            Some(*contents)
-        } else {
-            None
-        }
-    }
-
-    pub fn as_range_split(&self) -> Option<RangeSplitContents<'a>> {
-        if let &Self::RangeSplit(contents) = self {
-            Some(contents)
-        } else {
-            None
-        }
-    }
-}
-
-impl RichDocumentHelpers {
-    pub fn node_info<F, FOUT>(&self, ptr: Ptr<RichTag>, cb: F) -> FOUT
-    where
-        F: Fn(NodeInfo<'_>) -> FOUT,
-    {
-        let forest = &*self.forest();
-        let children = forest.get_children(ptr);
-        let parent = *forest.get_parent(ptr);
-        let info = NodeInfo { parent, children };
-        cb(info)
-    }
-    pub fn node_info_mut<F, FOUT>(&self, ptr: Ptr<RichTag>, cb: F) -> FOUT
-    where
-        F: Fn(NodeInfoMut<'_>) -> FOUT,
-    {
-        let forest = &mut *self.forest_mut();
-        let parent = *forest.get_parent_mut(ptr);
-        let children = forest.get_children_mut(ptr);
-        let info = NodeInfoMut { parent, children };
-        cb(info)
-    }
-
-    pub fn create_text_node(&self, state: TextState, extra: ExtraTextState) -> Ptr<RichTag> {
-        let forest = &mut *self.forest.borrow_mut();
-        let forest_content = &mut *self.forest_content.borrow_mut();
-        let ptr = forest.allocate_node(RichNodeKind::Text(state));
-        forest_content.insert(ptr, RichAuxData::Text(extra));
-        ptr
-    }
-    pub fn create_line_node(&self) -> Ptr<RichTag> {
-        self.forest_mut().allocate_node(RichNodeKind::Line)
-    }
-    pub fn create_document_node(&self) -> Ptr<RichTag> {
-        self.forest_mut().allocate_node(RichNodeKind::Document)
-    }
-
-    pub fn split_content_mono(
-        content: &str,
-        selection: RichSelection,
-    ) -> Result<SplitKind<'_>, &'static str> {
-        match selection.kind() {
-            RichSelectionKind::MultiNode => Err("Operation not intended for the multinode case"),
-            RichSelectionKind::MonoNode(RichCharacterRangeKind::MultiCharacter) => {
-                let head = &content[0..selection.start_offset.utf8];
-                let selected = &content[selection.start_offset.utf8..selection.end_offset.utf8];
-                let tail = &content[selection.end_offset.utf8..];
-                Ok(SplitKind::RangeSplit(RangeSplitContents {
-                    head,
-                    selected,
-                    tail,
-                }))
-            }
-            RichSelectionKind::MonoNode(RichCharacterRangeKind::MonoCharacter) => {
-                let left = &content[0..selection.start_offset.utf8];
-                let right = &content[selection.start_offset.utf8..];
-                Ok(SplitKind::CaretSplit(CaretSplitContents { left, right }))
-            }
-        }
-    }
-
-    pub fn delete_node(&self, root: Ptr<RichTag>) {
-        let forest = &mut *self.forest.borrow_mut();
-        let forest_content = &mut *self.forest_content.borrow_mut();
-        forest.free_and_then(root, |ptr| {
-            forest_content.remove(&ptr);
-        });
-    }
-
-    pub fn try_node_data<F, FOUT>(&self, ptr: Ptr<RichTag>, cb: F) -> FOUT
-    where
-        F: Fn(&RichNodeKind) -> FOUT,
-    {
-        cb(self.forest().get_data(ptr))
-    }
-    pub fn try_node_data_mut<F, FOUT>(&self, ptr: Ptr<RichTag>, mut cb: F) -> FOUT
-    where
-        F: FnMut(&mut RichNodeKind) -> FOUT,
-    {
-        cb(self.forest_mut().get_data_mut(ptr))
-    }
-
-    pub fn get_aux_data<F, Out>(&self, ptr: Ptr<RichTag>, cb: F) -> Option<Out>
-    where
-        F: FnOnce(&RichAuxData) -> Out,
-    {
-        self.forest_content.borrow().get(&ptr).map(cb)
-    }
-
-    pub fn get_aux_data_mut<F, Out>(&self, ptr: Ptr<RichTag>, cb: F) -> Option<Out>
-    where
-        F: FnOnce(&mut RichAuxData) -> Out,
-    {
-        self.forest_content.borrow_mut().get_mut(&ptr).map(cb)
-    }
-
-    pub fn forest_content_mut<'a>(&'a self) -> std::cell::RefMut<'a, RichContentTable> {
-        self.forest_content.borrow_mut()
-    }
-
-    pub fn forest_content<'a>(&'a self) -> std::cell::Ref<'a, RichContentTable> {
-        self.forest_content.borrow()
-    }
-
-    pub fn forest(&self) -> std::cell::Ref<'_, RichForest> {
-        self.forest.borrow()
-    }
-    pub fn forest_mut(&self) -> std::cell::RefMut<'_, RichForest> {
-        self.forest.borrow_mut()
-    }
-
-    pub fn get_aux_text_state_mut<F, Out>(&self, ptr: Ptr<RichTag>, cb: F) -> Option<Out>
-    where
-        F: FnOnce(&mut ExtraTextState) -> Out,
-    {
-        self.get_aux_data_mut(ptr, |aux_data| aux_data.as_text_mut().map(cb))
-            .flatten()
-    }
-
-    pub fn try_get_extra_text_state<F, FOUT>(
-        &self,
-        ptr: Ptr<RichTag>,
-        cb: F,
-    ) -> Result<FOUT, &'static str>
-    where
-        F: Fn(&ExtraTextState) -> FOUT,
-    {
-        let forest_content = self.forest_content();
-        let data = forest_content
-            .get(&ptr)
-            .ok_or("Pointer not found in table")?;
-        let extra_text_state = data.as_text().ok_or("Node isn't a text node")?;
-        Ok(cb(extra_text_state))
-    }
-    pub fn try_get_extra_text_state_mut<F, FOUT>(
-        &self,
-        ptr: Ptr<RichTag>,
-        cb: F,
-    ) -> Result<FOUT, &'static str>
-    where
-        F: Fn(&mut ExtraTextState) -> FOUT,
-    {
-        let mut forest_content = self.forest_content_mut();
-        let data = forest_content
-            .get_mut(&ptr)
-            .ok_or("Pointer not found in table")?;
-        let extra_text_state = data.as_text_mut().ok_or("Node isn't a text node")?;
-        Ok(cb(extra_text_state))
-    }
-
-    pub fn try_set_text_selection(
-        &self,
-        ptr: Ptr<RichTag>,
-        selection: TextSelectionKind,
-    ) -> Result<(), &'static str> {
-        let mut forest_content = self.forest_content_mut();
-        let data = forest_content
-            .get_mut(&ptr)
-            .ok_or("Pointer not found in table")?;
-        let extra_text_state = data.as_text_mut().ok_or("Node isn't a text node")?;
-        extra_text_state.selection = selection;
-        Ok(())
-    }
-
-    pub fn try_get_text_selection(
-        &self,
-        ptr: Ptr<RichTag>,
-    ) -> Result<TextSelectionKind, &'static str> {
-        let forest_content = self.forest_content();
-        let data = forest_content
-            .get(&ptr)
-            .ok_or("Pointer not found in table")?;
-        let extra_text_state = data.as_text().ok_or("Node isn't a text node")?;
-        Ok(extra_text_state.selection)
-    }
-
-    pub fn try_get_text_state<F, Out>(&self, ptr: Ptr<RichTag>, f: F) -> Result<Out, &'static str>
-    where
-        F: FnOnce(&TextState) -> Out,
-    {
-        let forest = self.forest.borrow();
-        let node_data = forest.get_data(ptr);
-        let text_state = node_data.as_text().ok_or("Not a text node")?;
-        Ok(f(text_state))
-    }
-
-    pub fn try_get_text_state_mut<F, Out>(
-        &self,
-        ptr: Ptr<RichTag>,
-        f: F,
-    ) -> Result<Out, &'static str>
-    where
-        F: FnOnce(&mut TextState) -> Out,
-    {
-        let mut forest = self.forest.borrow_mut();
-        let node_data = forest.get_data_mut(ptr);
-        let text_state = node_data.as_text_mut().ok_or("Not a text node")?;
-        Ok(f(text_state))
-    }
-}
-
-impl Default for TextAreaState {
-    fn default() -> Self {
-        Self::new()
-    }
-}
 
 #[derive(Clone, PartialEq, Properties)]
 struct TextAreaToolProps {
@@ -909,26 +29,55 @@ struct TextAreaToolProps {
 #[function_component]
 fn TextAreaTool(p: &TextAreaToolProps) -> Html {
     let local_tool_info = p.tool_info.clone();
-    let classes = [
-        local_tool_info.name.as_ref(),
-        local_tool_info.css_icon.as_ref(),
-    ]
-    .into_iter()
-    .fold(String::new(), |mut acc, item| {
-        acc.push(' ');
-        acc.push_str(item);
-        acc.push(' ');
-        acc
-    });
+    let classes = [local_tool_info.name, local_tool_info.css_icon]
+        .into_iter()
+        .fold(String::new(), |mut acc, item| {
+            acc.push(' ');
+            acc.push_str(item);
+            acc.push(' ');
+            acc
+        });
     let tool_idx = p.tool_idx;
     let input_ref = p.input_ref.clone();
     let tool_onclick = Callback::from({
         let parent_state_handler = p.parent_state.clone();
         move |e: web_sys::MouseEvent| {
             e.prevent_default();
+            let hidden_input_elem = input_ref
+                .cast::<HtmlInputElement>()
+                .expect("Failed to get hidden input");
             let mut state = parent_state_handler.deref().clone();
+            let effect_buffer = state.effects_buffer.clone();
             state = state.set_focused_tool(Some(tool_idx));
-            state.execute_tool_by_idx(tool_idx, &input_ref);
+
+            state
+                .execute_tool_by_idx(tool_idx, &mut effect_buffer.borrow_mut())
+                .apply(|effect| match effect {
+                    Effect::HiddenInput(op) => match op {
+                        HiddenInputOp::Focus {
+                            prevent_scroll,
+                            focus_visible,
+                        } => {
+                            let options = FocusOptions::new();
+                            options.set_focus_visible(*focus_visible);
+                            options.set_prevent_scroll(*prevent_scroll);
+                            hidden_input_elem
+                                .focus_with_options(&options)
+                                .expect("Failed to focus");
+                        }
+                        HiddenInputOp::SetValue(val) => {
+                            hidden_input_elem.set_value(val);
+                        }
+                        HiddenInputOp::SetSelectionRange { start, end } => {
+                            hidden_input_elem
+                                .set_selection_range(*start, *end)
+                                .expect("Failed to set selection");
+                        }
+                    },
+                    Effect::ConsoleLog(message) => {
+                        console_log(message.clone());
+                    }
+                });
             state.trigger_update();
             parent_state_handler.set(state);
         }
@@ -1091,25 +240,37 @@ pub fn RichTextArea() -> Html {
                             "Backspace" => {}
                             "Enter" => {
                                 let effect_buffer = state.effects_buffer.clone();
-                                TextAreaState::run_effects(
-                                    create_new_line_at_caret(
-                                        &mut state,
-                                        focused_node,
-                                        focused_node_state,
-                                        document_selection,
-                                        &mut effect_buffer.borrow_mut(),
-                                    ),
-                                    |effect| match effect {
-                                        Effect::HiddenInput(op_kind) => match op_kind {
-                                            &HiddenInputOp::SetSelectionRange { start, end } => {
-                                                let _ = input_elem.set_selection_range(start, end);
-                                            }
-                                            HiddenInputOp::SetValue(val) => {
-                                                input_elem.set_value(val);
-                                            }
-                                        },
+                                create_new_line_at_caret(
+                                    &mut state,
+                                    focused_node,
+                                    focused_node_state,
+                                    document_selection,
+                                    &mut effect_buffer.borrow_mut(),
+                                )
+                                .apply(|effect| match effect {
+                                    Effect::HiddenInput(op_kind) => match op_kind {
+                                        &HiddenInputOp::SetSelectionRange { start, end } => {
+                                            let _ = input_elem.set_selection_range(start, end);
+                                        }
+                                        HiddenInputOp::SetValue(val) => {
+                                            input_elem.set_value(val);
+                                        }
+                                        HiddenInputOp::Focus {
+                                            prevent_scroll,
+                                            focus_visible,
+                                        } => {
+                                            let options = FocusOptions::new();
+                                            options.set_prevent_scroll(*prevent_scroll);
+                                            options.set_focus_visible(*focus_visible);
+                                            input_elem
+                                                .focus_with_options(&options)
+                                                .expect("Failed to focuse");
+                                        }
                                     },
-                                );
+                                    Effect::ConsoleLog(message) => {
+                                        console_log(message.into());
+                                    }
+                                });
                             }
                             "ArrowLeft" => {
                                 let text_state = state
@@ -1349,7 +510,7 @@ pub fn create_new_line_at_caret<'a>(
     focused_node_state: TextState,
     document_selection: RichSelection,
     effect_buffer: &'a mut Vec<Effect>,
-) -> &'a mut Vec<Effect> {
+) -> EffectRunner<'a> {
     let helpers = state.document_helpers();
     let current_line_container = helpers.node_info(focused_node, |info| info.parent);
     let current_line_children =
@@ -1483,7 +644,7 @@ pub fn create_new_line_at_caret<'a>(
             end: 0,
         }));
     }
-    effect_buffer
+    EffectRunner::with_buffer(effect_buffer)
 }
 
 pub fn move_caret_horizontal(
@@ -1633,6 +794,10 @@ fn RichDisplayNode(p: &RichDisplayNodeProps) -> Html {
                 let ta_state_handle = ta_state.clone();
                 Callback::from(move |_e: MouseEvent| {
                     let mut ta_state = ta_state_handle.deref().clone();
+                    console_log("DOCUMENT DUMP:".into());
+                    console_log(ta_state.tree_dump());
+                    console_log("NOTATION DUMP:".into());
+                    console_log(ta_state.to_notation());
                     ta_state.flush_overlays();
                     ta_state.flush_tasks();
                     *ta_state.document_selection_mut() = None;
@@ -2339,42 +1504,6 @@ pub fn update_toolbar_to_display_common_styles_multinode(
     let common_selected_styling = compute_common_stylings_in_selection(ta_state, selection);
     update_toolbar_styles(ta_state, common_selected_styling);
     console_log(format!("common styles = {:?}", common_selected_styling));
-}
-
-pub fn compute_common_stylings_in_selection(
-    ta_state: &TextAreaState,
-    selection: &RichSelection,
-) -> InlineStyling {
-    fn filter_out_non_text_nodes_they_dont_matter(
-        (_ptr, data_kind): (Ptr<RichTag>, &RichNodeKind),
-    ) -> Option<&TextState> {
-        data_kind.as_text()
-    }
-
-    fn filter_out_empty_nodes_the_styling_shouldnt_contribute_to_the_accumulator(
-        text_state: &&TextState,
-    ) -> bool {
-        !text_state.content.is_empty()
-    }
-
-    ta_state
-        .forest
-        .borrow()
-        .iter_inclusive(ta_state.document, selection.start_node, selection.end_node)
-        .filter_map(filter_out_non_text_nodes_they_dont_matter)
-        .filter(filter_out_empty_nodes_the_styling_shouldnt_contribute_to_the_accumulator)
-        .fold(InlineStyling::all(), |acc, e| acc & e.styling)
-}
-
-pub fn update_toolbar_styles(ta_state: &mut TextAreaState, styles: InlineStyling) {
-    const BY_UNSTYLED_FLAG: usize = 1;
-    InlineStyling::FLAGS
-        .iter()
-        .skip(BY_UNSTYLED_FLAG)
-        .enumerate()
-        .for_each(|(flag_idx, flag)| {
-            ta_state.tools[flag_idx].is_selected = styles.contains(*flag.value());
-        });
 }
 
 #[derive(Copy, Clone, PartialEq)]
