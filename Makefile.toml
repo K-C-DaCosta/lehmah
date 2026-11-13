@@ -29,7 +29,7 @@ description = "Enables you to call sqlx commands for oxypress from root"
 [tasks.run-tests]
 workspace = false 
 command = "cargo"
-args = ["test","${@}","--", "--no-capture"]
+args = ["test","--target=x86_64-unknown-linux-gnu","${@}","--", "--no-capture"]
 env = { "RUSTFLAGS" = "-A warnings" } 
 description = "Runs tests with warnings supressed"
 

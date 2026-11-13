@@ -222,6 +222,14 @@ impl TextSelectionKind {
             None
         }
     }
+
+    pub fn to_range_extended(&self) -> RichRange {
+        match self {
+            &Self::Caret(pos) => RichRange::from_caret(pos),
+            &Self::Range(range) => range,
+            Self::Unselected => panic!("Failed to convert unselected text to range"),
+        }
+    }
 }
 
 #[derive(Clone, PartialEq)]
@@ -474,9 +482,13 @@ impl TextAreaState {
                     TextSelectionKind::Caret(pos) => {
                         let lower = &content[0..pos.utf8];
                         let upper = &content[pos.utf8..];
-                        output.push_str(&apply_notation_styles(styling, lower.into()));
+                        if !lower.is_empty() {
+                            output.push_str(&apply_notation_styles(styling, lower.into()));
+                        }
                         output.push('|');
-                        output.push_str(&apply_notation_styles(styling, upper.into()));
+                        if !upper.is_empty() {
+                            output.push_str(&apply_notation_styles(styling, upper.into()));
+                        }
                     }
                     TextSelectionKind::Unselected => {
                         output.push_str(&apply_notation_styles(styling, content));
@@ -485,11 +497,17 @@ impl TextAreaState {
                         let head = &content[..range.start.utf8];
                         let selected = &content[range.start.utf8..range.end.utf8];
                         let tail = &content[range.end.utf8..];
-                        output.push_str(&apply_notation_styles(styling, head.into()));
+                        if !head.is_empty() {
+                            output.push_str(&apply_notation_styles(styling, head.into()));
+                        }
                         output.push('[');
-                        output.push_str(&apply_notation_styles(styling, selected.into()));
+                        if !selected.is_empty() {
+                            output.push_str(&apply_notation_styles(styling, selected.into()));
+                        }
                         output.push(']');
-                        output.push_str(&apply_notation_styles(styling, tail.into()));
+                        if !tail.is_empty() {
+                            output.push_str(&apply_notation_styles(styling, tail.into()));
+                        }
                     }
                 }
             }
@@ -1522,5 +1540,209 @@ pub mod document_operations {
             RichRange::from_caret(caret),
         ));
         runner
+    }
+
+    pub fn create_new_line_at_caret<F>(
+        state: &mut TextAreaState,
+        focused_node: Ptr<RichTag>,
+        document_selection: RichSelection,
+        runner: EffectRunner<F>,
+    ) -> EffectRunner<F>
+    where
+        F: EffectExecutionContext,
+    {
+        let helpers = state.document_helpers();
+        let current_line_container = helpers.node_info(focused_node, |info| info.parent);
+        let focused_node_state = helpers
+            .try_get_text_state(focused_node, |ts| ts.clone())
+            .expect("Failed to get focused text state");
+        let current_line_children =
+            helpers.node_info(current_line_container, |info| info.children.to_vec());
+        let focued_node_position_in_line_container = current_line_children
+            .iter()
+            .enumerate()
+            .find(|(_, ptr)| **ptr == focused_node)
+            .map(|(idx, _)| idx)
+            .expect("Failed to find focused node in container");
+
+        let new_line_container = helpers.create_line_node();
+
+        let CaretSplitContents {
+            left: lower_split,
+            right: upper_split,
+        } = RichDocumentHelpers::split_content_mono(
+            &focused_node_state.content,
+            document_selection,
+        )
+        .expect("Failed to get monoselection")
+        .as_caret_split()
+        .expect("Failed to get caret split");
+
+        helpers
+            .try_get_text_state_mut(focused_node, |text_state| {
+                text_state.content.clear();
+                text_state.content.push_str(lower_split);
+            })
+            .expect("Failed to get text state ");
+
+        let new_text_node = helpers.create_text_node(
+            TextState {
+                content: upper_split.to_string(),
+                styling: focused_node_state.styling,
+            },
+            ExtraTextState {
+                selection: TextSelectionKind::Caret(RichOffset::zero()),
+            },
+        );
+
+        helpers.forest_mut().add_child_at(
+            state.document,
+            new_line_container,
+            current_line_container,
+            1,
+        );
+        helpers
+            .forest_mut()
+            .add_child(new_line_container, new_text_node);
+
+        let nodes_to_the_right_of_focused =
+            &current_line_children[focued_node_position_in_line_container + 1..];
+
+        // move all nodes to the right of focused into the new line along with the new_text_node
+        nodes_to_the_right_of_focused
+            .iter()
+            .copied()
+            .for_each(|node_after_focused| {
+                helpers
+                    .forest_mut()
+                    .add_child(new_line_container, node_after_focused);
+            });
+
+        // All of the nodes to the right of focus are in the new line and are stale
+        // in the original line so we delete them
+        helpers.node_info_mut(current_line_container, |info| {
+            let stale_nodes = nodes_to_the_right_of_focused.len();
+            for _ in 0..stale_nodes {
+                info.children.pop();
+            }
+        });
+
+        runner.push(Effect::HiddenInput(HiddenInputOp::SetValue(
+            upper_split.to_string(),
+        )));
+        runner.push(Effect::HiddenInput(HiddenInputOp::SetSelectionRange {
+            start: 0,
+            end: 0,
+        }));
+
+        *state.focused_node_mut() = new_text_node;
+        *state.document_selection_mut() = Some(RichSelection::mononode(
+            new_text_node,
+            RichRange::from_caret(RichOffset::zero()),
+        ));
+        state.flush_overlays();
+        helpers
+            .try_set_text_selection(new_text_node, TextSelectionKind::Caret(RichOffset::zero()))
+            .expect("Failed to set text data");
+
+        let is_focused_text_node_empty = || lower_split.is_empty();
+        let current_line_contains_an_empty_text_node_but_multiple_text_nodes_exist = || {
+            is_focused_text_node_empty()
+                && helpers.node_info(current_line_container, |info| info.children.len()) > 1
+        };
+
+        if current_line_contains_an_empty_text_node_but_multiple_text_nodes_exist() {
+            helpers.delete_node(focused_node);
+        }
+
+        let is_new_focused_text_node_empty = || upper_split.is_empty();
+        let new_line_contains_empty_text_node_but_multiple_text_nodes_exist = || {
+            is_new_focused_text_node_empty()
+                && helpers.node_info(new_line_container, |info| info.children.len()) > 1
+        };
+        if new_line_contains_empty_text_node_but_multiple_text_nodes_exist() {
+            helpers.delete_node(new_text_node);
+            let alt_new_focused_node = helpers
+                .node_info(new_line_container, |info| info.children.first().copied())
+                .expect("Failed to get first node");
+
+            state.flush_overlays();
+            *state.focused_node_mut() = alt_new_focused_node;
+            *state.document_selection_mut() = Some(RichSelection::mononode(
+                alt_new_focused_node,
+                RichRange::default(),
+            ));
+            helpers
+                .try_set_text_selection(
+                    alt_new_focused_node,
+                    TextSelectionKind::Caret(RichOffset::zero()),
+                )
+                .expect("Failed to set selection");
+            runner.push(Effect::HiddenInput(HiddenInputOp::SetValue(
+                helpers
+                    .try_get_text_state(alt_new_focused_node, |text_state| {
+                        text_state.content.clone()
+                    })
+                    .expect("Failed to get content"),
+            )));
+            runner.push(Effect::HiddenInput(HiddenInputOp::SetSelectionRange {
+                start: 0,
+                end: 0,
+            }));
+        }
+        runner
+    }
+}
+
+mod tests {
+    use super::*;
+
+    fn to_flat<T: AsRef<[&'static str]>>(lines: T) -> String {
+        lines
+            .as_ref()
+            .iter()
+            .map(|line| line.trim_start())
+            .collect()
+    }
+
+    #[test]
+    fn sample_document() {
+        let mut text_area = TextAreaState::new().with_sample_document();
+        let output = text_area.to_notation();
+        #[rustfmt::skip]
+        assert_eq!(output, to_flat([
+            "<b>Hello</b>|<b> World</b>\n"
+        ]));
+    }
+
+    #[test]
+    fn enter_line_at_caret() {
+        let mut text_area = TextAreaState::new().with_sample_document();
+        let helpers = text_area.document_helpers();
+
+        let line = helpers.node_info(text_area.document, |info| info.children[0]);
+        let text_node = helpers.node_info(line, |info| info.children[0]);
+        let caret_range = helpers
+            .try_get_extra_text_state(text_node, |extra_text_state| extra_text_state.selection)
+            .expect("Failed to get selection")
+            .to_range_extended();
+        let runner = text_area.runner(|a| None);
+
+        document_operations::create_new_line_at_caret(
+            &mut text_area,
+            text_node,
+            RichSelection::mononode(text_node, caret_range),
+            runner,
+        );
+
+        let output = text_area.to_notation();
+        #[rustfmt::skip]
+        assert_eq!(
+            output,
+            to_flat([
+            "<b>Hello</b>\n", 
+            "|<b> World</b>\n"
+            ])
+        );
     }
 }
