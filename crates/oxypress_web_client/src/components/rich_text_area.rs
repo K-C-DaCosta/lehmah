@@ -202,7 +202,9 @@ pub fn RichTextArea() -> Html {
                 .target_dyn_into::<HtmlInputElement>()
                 .expect("Failed to cast to InputElement");
 
-            let document_selection = state.document_selection().expect("Failed to get selection");
+            let document_selection = state
+                .document_selection()
+                .expect("Failed to get document selection");
             match document_selection.kind() {
                 RichSelectionKind::MonoNode(RichCharacterRangeKind::MonoCharacter) => {
                     let focused_node = document_selection.start_node;
@@ -308,7 +310,6 @@ pub fn RichTextArea() -> Html {
             }
 
             state.trigger_update();
-
             state_handler.set(state);
         }
     });
@@ -500,8 +501,6 @@ fn inner_operation(
     ));
 }
 
-
-
 #[derive(Properties, PartialEq)]
 struct RichDisplayNodeProps {
     pub ta_state: UseStateHandle<TextAreaState>,
@@ -568,110 +567,105 @@ fn RichDisplayNode(p: &RichDisplayNodeProps) -> Html {
                 let state_handler = ta_state.clone();
                 Callback::from(move |_e: MouseEvent| {
                     let mut ta_state = state_handler.deref().clone();
+                    let helpers = ta_state.document_helpers();
                     let focus_options = FocusOptions::new();
                     focus_options.set_prevent_scroll(true);
 
                     console_log("RT-TEXT ON MOUSEUP FIRED".into());
 
-                    if let Some(input) = input_ref.cast::<HtmlInputElement>() {
-                        let clicked_text_node_is_empty = ta_state
-                            .forest
-                            .borrow()
-                            .get_data(root)
-                            .as_text()
-                            .map(|state| &state.content)
-                            .map(String::is_empty)
-                            .unwrap_or(false);
+                    let hidden_input_element = input_ref
+                        .cast::<HtmlInputElement>()
+                        .expect("Failed to cast to HtmlInputElement");
 
-                        if clicked_text_node_is_empty {
-                            // SKIP `COMPUTE_DOCUMENT_SELECTION(..)`
-                            // Note:
-                            // I'm trying to remember *why* i do this...
-                            // I think its because `compute_document_selection` grabs
-                            // weird nodes, but in order for me to actually confirm i'd need to
-                            // remove this skip-condition and I just kinda wanna move on.
-                            // Note:
-                            // Yeah but im pretty sure im right. As of writing this comment
-                            // an "Empty" node shoudn't have a text node, so when we click on
-                            // the empty `rt-text` node, `compute_document_select(..)` grabs nodes that
-                            // aren't relevant for what this editor is trying to do.
-                            let _ = input.focus_with_options(&focus_options);
-                            input.set_value("");
-                            if let Some(state) = ta_state
-                                .forest_content
-                                .borrow_mut()
-                                .get_mut(&root)
-                                .and_then(RichAuxData::as_text_mut)
-                            {
-                                state.selection = TextSelectionKind::Caret(RichOffset::zero());
-                            }
-                        } else if let Ok(selection) = compute_document_selection() {
-                            match selection.kind() {
-                                RichSelectionKind::MonoNode(character_range) => {
-                                    let node = selection.start_node;
-                                    let node_state = ta_state
-                                        .forest
-                                        .borrow()
-                                        .get_data(node)
-                                        .as_text()
-                                        .cloned()
-                                        .expect("Failed to get node state");
-                                    if let Some(state) = ta_state
-                                        .forest_content
-                                        .borrow_mut()
-                                        .get_mut(&node)
-                                        .and_then(RichAuxData::as_text_mut)
-                                    {
-                                        match character_range {
-                                            RichCharacterRangeKind::MonoCharacter => {
-                                                state.selection = TextSelectionKind::Caret(
-                                                    selection.start_offset,
-                                                );
-                                            }
-                                            RichCharacterRangeKind::MultiCharacter => {
-                                                state.selection =
-                                                    TextSelectionKind::Range(RichRange {
-                                                        start: selection.start_offset,
-                                                        end: selection.end_offset,
-                                                    })
-                                            }
+                    let clicked_text_node_is_empty = helpers
+                        .try_get_text_state(root, |text_state| text_state.content.is_empty())
+                        .unwrap_or(false);
+
+                    if clicked_text_node_is_empty {
+                        // SKIP `COMPUTE_DOCUMENT_SELECTION(..)`
+                        // Note:
+                        // I'm trying to remember *why* i do this...
+                        // I think its because `compute_document_selection` grabs
+                        // weird nodes, but in order for me to actually confirm i'd need to
+                        // remove this skip-condition and I just kinda wanna move on.
+                        // Note:
+                        // Yeah but im pretty sure im right. As of writing this comment
+                        // an "Empty" node shoudn't have a text node, so when we click on
+                        // the empty `rt-text` node, `compute_document_select(..)` grabs nodes that
+                        // aren't relevant for what this editor is trying to do.
+                        let _ = hidden_input_element.focus_with_options(&focus_options);
+                        hidden_input_element.set_value("");
+                        if let Some(state) = ta_state
+                            .forest_content
+                            .borrow_mut()
+                            .get_mut(&root)
+                            .and_then(RichAuxData::as_text_mut)
+                        {
+                            state.selection = TextSelectionKind::Caret(RichOffset::zero());
+                        }
+                        *ta_state.document_selection_mut() =
+                            Some(RichSelection::mononode(root, RichRange::default()));
+                    } else if let Ok(selection) = compute_document_selection() {
+                        match selection.kind() {
+                            RichSelectionKind::MonoNode(character_range) => {
+                                let node = selection.start_node;
+                                let node_state = ta_state
+                                    .forest
+                                    .borrow()
+                                    .get_data(node)
+                                    .as_text()
+                                    .cloned()
+                                    .expect("Failed to get node state");
+                                if let Some(state) = ta_state
+                                    .forest_content
+                                    .borrow_mut()
+                                    .get_mut(&node)
+                                    .and_then(RichAuxData::as_text_mut)
+                                {
+                                    match character_range {
+                                        RichCharacterRangeKind::MonoCharacter => {
+                                            state.selection =
+                                                TextSelectionKind::Caret(selection.start_offset);
                                         }
-
-                                        input.set_value(&node_state.content);
-                                        input
-                                            .set_selection_start(Some(
-                                                selection.start_offset.utf16 as u32,
-                                            ))
-                                            .expect("Failed to set start selection");
-                                        input
-                                            .set_selection_end(Some(
-                                                selection.end_offset.utf16 as u32,
-                                            ))
-                                            .expect("Failed to set start selection");
+                                        RichCharacterRangeKind::MultiCharacter => {
+                                            state.selection = TextSelectionKind::Range(RichRange {
+                                                start: selection.start_offset,
+                                                end: selection.end_offset,
+                                            })
+                                        }
                                     }
-                                    update_toolbar_styles(&mut ta_state, node_state.styling);
+
+                                    hidden_input_element.set_value(&node_state.content);
+                                    hidden_input_element
+                                        .set_selection_start(Some(
+                                            selection.start_offset.utf16 as u32,
+                                        ))
+                                        .expect("Failed to set start selection");
+                                    hidden_input_element
+                                        .set_selection_end(Some(selection.end_offset.utf16 as u32))
+                                        .expect("Failed to set start selection");
                                 }
-                                RichSelectionKind::MultiNode => {
-                                    let effect_buffer = ta_state.runner(|e| {
-                                        wasm_syscalls::effect_handler(e, input.clone())
-                                    });
-                                    document_operations::apply_highlights(&ta_state, selection);
-                                    document_operations::update_toolbar_to_display_common_styles_multinode(
+                                update_toolbar_styles(&mut ta_state, node_state.styling);
+                            }
+                            RichSelectionKind::MultiNode => {
+                                let effect_buffer = ta_state.runner(|e| {
+                                    wasm_syscalls::effect_handler(e, hidden_input_element.clone())
+                                });
+                                document_operations::apply_highlights(&ta_state, selection);
+                                document_operations::update_toolbar_to_display_common_styles_multinode(
                                         &mut ta_state,
                                         &selection,
                                         effect_buffer.clone(),
                                     ).drain();
-                                    ta_state.trigger_update();
-                                }
+                                ta_state.trigger_update();
                             }
-                            *ta_state.document_selection_mut() = Some(selection);
-
-                            let _ = input.focus_with_options(&focus_options);
                         }
-
-                        *ta_state.focused_node_mut() = root;
-                        state_handler.set(ta_state);
+                        *ta_state.document_selection_mut() = Some(selection);
+                        let _ = hidden_input_element.focus_with_options(&focus_options);
                     }
+
+                    *ta_state.focused_node_mut() = root;
+                    state_handler.set(ta_state);
                 })
             };
 
