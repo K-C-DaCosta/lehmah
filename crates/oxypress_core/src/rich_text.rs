@@ -2,6 +2,9 @@ use crate::collections::{flatforest::FlatForest, ringbuffer::RingBuffer, Ptr};
 use bitflags::{bitflags, Flags};
 use std::{cell::RefCell, collections::HashMap, panic, rc::Rc};
 
+#[cfg(test)]
+pub mod tests; 
+
 #[derive(Debug)]
 pub struct RichTag;
 
@@ -473,7 +476,7 @@ impl TextAreaState {
 
                 if content.is_empty() {
                     let mut draw_sentinel_text_nodes = || {
-                        content.push('.');
+                        content.push('∅');
                     };
                     draw_sentinel_text_nodes();
                 }
@@ -1687,55 +1690,3 @@ pub mod document_operations {
     }
 }
 
-mod tests {
-    use super::*;
-
-    fn to_flat<T: AsRef<[&'static str]>>(lines: T) -> String {
-        lines
-            .as_ref()
-            .iter()
-            .map(|line| line.trim_start())
-            .collect()
-    }
-
-    #[test]
-    fn sample_document() {
-        let mut text_area = TextAreaState::new().with_sample_document();
-        let output = text_area.to_notation();
-        #[rustfmt::skip]
-        assert_eq!(output, to_flat([
-            "<b>Hello</b>|<b> World</b>\n"
-        ]));
-    }
-
-    #[test]
-    fn enter_line_at_caret() {
-        let mut text_area = TextAreaState::new().with_sample_document();
-        let helpers = text_area.document_helpers();
-
-        let line = helpers.node_info(text_area.document, |info| info.children[0]);
-        let text_node = helpers.node_info(line, |info| info.children[0]);
-        let caret_range = helpers
-            .try_get_extra_text_state(text_node, |extra_text_state| extra_text_state.selection)
-            .expect("Failed to get selection")
-            .to_range_extended();
-        let runner = text_area.runner(|a| None);
-
-        document_operations::create_new_line_at_caret(
-            &mut text_area,
-            text_node,
-            RichSelection::mononode(text_node, caret_range),
-            runner,
-        );
-
-        let output = text_area.to_notation();
-        #[rustfmt::skip]
-        assert_eq!(
-            output,
-            to_flat([
-            "<b>Hello</b>\n", 
-            "|<b> World</b>\n"
-            ])
-        );
-    }
-}
