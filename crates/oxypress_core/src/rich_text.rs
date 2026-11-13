@@ -482,13 +482,9 @@ impl TextAreaState {
                     TextSelectionKind::Caret(pos) => {
                         let lower = &content[0..pos.utf8];
                         let upper = &content[pos.utf8..];
-                        if !lower.is_empty() {
-                            output.push_str(&apply_notation_styles(styling, lower.into()));
-                        }
+                        output.push_str(&apply_notation_styles(styling, lower.into()));
                         output.push('|');
-                        if !upper.is_empty() {
-                            output.push_str(&apply_notation_styles(styling, upper.into()));
-                        }
+                        output.push_str(&apply_notation_styles(styling, upper.into()));
                     }
                     TextSelectionKind::Unselected => {
                         output.push_str(&apply_notation_styles(styling, content));
@@ -497,17 +493,11 @@ impl TextAreaState {
                         let head = &content[..range.start.utf8];
                         let selected = &content[range.start.utf8..range.end.utf8];
                         let tail = &content[range.end.utf8..];
-                        if !head.is_empty() {
-                            output.push_str(&apply_notation_styles(styling, head.into()));
-                        }
+                        output.push_str(&apply_notation_styles(styling, head.into()));
                         output.push('[');
-                        if !selected.is_empty() {
-                            output.push_str(&apply_notation_styles(styling, selected.into()));
-                        }
+                        output.push_str(&apply_notation_styles(styling, selected.into()));
                         output.push(']');
-                        if !tail.is_empty() {
-                            output.push_str(&apply_notation_styles(styling, tail.into()));
-                        }
+                        output.push_str(&apply_notation_styles(styling, tail.into()));
                     }
                 }
             }
@@ -1328,6 +1318,9 @@ impl Default for TextAreaState {
 
 pub fn apply_notation_styles(styles: InlineStyling, base: String) -> String {
     let mut result = base;
+    if result.is_empty() {
+        return result;
+    }
     for flag in InlineStyling::FLAGS.iter() {
         let available_style = *flag.value();
         if styles.contains(available_style) {
