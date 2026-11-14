@@ -595,56 +595,52 @@ fn RichDisplayNode(p: &RichDisplayNodeProps) -> Html {
                         // aren't relevant for what this editor is trying to do.
                         let _ = hidden_input_element.focus_with_options(&focus_options);
                         hidden_input_element.set_value("");
-                        if let Some(state) = ta_state
-                            .forest_content
-                            .borrow_mut()
-                            .get_mut(&root)
-                            .and_then(RichAuxData::as_text_mut)
-                        {
-                            state.selection = TextSelectionKind::Caret(RichOffset::zero());
-                        }
+                        helpers
+                            .try_get_extra_text_state_mut(root, |extra_text_state| {
+                                extra_text_state.selection =
+                                    TextSelectionKind::Caret(RichOffset::zero());
+                            })
+                            .expect("Failed to set text selection");
                         *ta_state.document_selection_mut() =
                             Some(RichSelection::mononode(root, RichRange::default()));
                     } else if let Ok(selection) = compute_document_selection() {
                         match selection.kind() {
                             RichSelectionKind::MonoNode(character_range) => {
                                 let node = selection.start_node;
-                                let node_state = ta_state
-                                    .forest
-                                    .borrow()
-                                    .get_data(node)
-                                    .as_text()
-                                    .cloned()
+                                let node_state = helpers
+                                    .try_get_text_state(node, |e| e.clone())
                                     .expect("Failed to get node state");
-                                if let Some(state) = ta_state
-                                    .forest_content
-                                    .borrow_mut()
-                                    .get_mut(&node)
-                                    .and_then(RichAuxData::as_text_mut)
-                                {
-                                    match character_range {
-                                        RichCharacterRangeKind::MonoCharacter => {
-                                            state.selection =
-                                                TextSelectionKind::Caret(selection.start_offset);
+                                helpers
+                                    .try_get_extra_text_state_mut(node, |extra_text_state| {
+                                        match character_range {
+                                            RichCharacterRangeKind::MonoCharacter => {
+                                                extra_text_state.selection =
+                                                    TextSelectionKind::Caret(
+                                                        selection.start_offset,
+                                                    );
+                                            }
+                                            RichCharacterRangeKind::MultiCharacter => {
+                                                extra_text_state.selection =
+                                                    TextSelectionKind::Range(RichRange {
+                                                        start: selection.start_offset,
+                                                        end: selection.end_offset,
+                                                    })
+                                            }
                                         }
-                                        RichCharacterRangeKind::MultiCharacter => {
-                                            state.selection = TextSelectionKind::Range(RichRange {
-                                                start: selection.start_offset,
-                                                end: selection.end_offset,
-                                            })
-                                        }
-                                    }
-
-                                    hidden_input_element.set_value(&node_state.content);
-                                    hidden_input_element
-                                        .set_selection_start(Some(
-                                            selection.start_offset.utf16 as u32,
-                                        ))
-                                        .expect("Failed to set start selection");
-                                    hidden_input_element
-                                        .set_selection_end(Some(selection.end_offset.utf16 as u32))
-                                        .expect("Failed to set start selection");
-                                }
+                                        
+                                        hidden_input_element.set_value(&node_state.content);
+                                        hidden_input_element
+                                            .set_selection_start(Some(
+                                                selection.start_offset.utf16 as u32,
+                                            ))
+                                            .expect("Failed to set start selection");
+                                        hidden_input_element
+                                            .set_selection_end(Some(
+                                                selection.end_offset.utf16 as u32,
+                                            ))
+                                            .expect("Failed to set start selection");
+                                    })
+                                    .expect("Failed to set text selection mononode");
                                 update_toolbar_styles(&mut ta_state, node_state.styling);
                             }
                             RichSelectionKind::MultiNode => {

@@ -3,7 +3,7 @@ use bitflags::{bitflags, Flags};
 use std::{cell::RefCell, collections::HashMap, panic, rc::Rc};
 
 #[cfg(test)]
-pub mod tests; 
+pub mod tests;
 
 #[derive(Debug)]
 pub struct RichTag;
@@ -225,14 +225,6 @@ impl TextSelectionKind {
             None
         }
     }
-
-    pub fn to_range_extended(&self) -> RichRange {
-        match self {
-            &Self::Caret(pos) => RichRange::from_caret(pos),
-            &Self::Range(range) => range,
-            Self::Unselected => panic!("Failed to convert unselected text to range"),
-        }
-    }
 }
 
 #[derive(Clone, PartialEq)]
@@ -243,8 +235,13 @@ impl ExtraTextState {
     pub fn set_range_selection_with_offsets(&mut self, start: RichOffset, end: RichOffset) {
         self.selection = TextSelectionKind::Range(RichRange { start, end });
     }
+
     pub fn set_range_selection(&mut self, range: RichRange) {
         self.selection = TextSelectionKind::Range(range);
+    }
+
+    pub fn has_caret(&self) -> bool {
+        self.selection.as_caret().is_some()
     }
 }
 
@@ -329,7 +326,13 @@ impl TextAreaState {
          *  Document
          *  ..Line
          *  ....Text('HELLO WORLD'|Bold)
+         *  -------------
+         *  The side table `forest_content`
+         *  holds highlighting/caret information for text 
+         *  nodes
          * */
+
+
         let sample_text = "Hello World";
         let helpers = self.document_helpers();
         let document = helpers.create_document_node();
@@ -485,9 +488,11 @@ impl TextAreaState {
                     TextSelectionKind::Caret(pos) => {
                         let lower = &content[0..pos.utf8];
                         let upper = &content[pos.utf8..];
-                        output.push_str(&apply_notation_styles(styling, lower.into()));
-                        output.push('|');
-                        output.push_str(&apply_notation_styles(styling, upper.into()));
+                        let mut temp = String::new();
+                        temp.push_str(lower);
+                        temp.push('|');
+                        temp.push_str(upper);
+                        output.push_str(&apply_notation_styles(styling, temp));
                     }
                     TextSelectionKind::Unselected => {
                         output.push_str(&apply_notation_styles(styling, content));
@@ -496,11 +501,13 @@ impl TextAreaState {
                         let head = &content[..range.start.utf8];
                         let selected = &content[range.start.utf8..range.end.utf8];
                         let tail = &content[range.end.utf8..];
-                        output.push_str(&apply_notation_styles(styling, head.into()));
-                        output.push('[');
-                        output.push_str(&apply_notation_styles(styling, selected.into()));
-                        output.push(']');
-                        output.push_str(&apply_notation_styles(styling, tail.into()));
+                        let mut temp = String::new();
+                        temp.push_str(head);
+                        temp.push('[');
+                        temp.push_str(selected);
+                        temp.push(']');
+                        temp.push_str(tail);
+                        output.push_str(&apply_notation_styles(styling, temp));
                     }
                 }
             }
@@ -1679,7 +1686,7 @@ pub mod document_operations {
                     .try_get_text_state(alt_new_focused_node, |text_state| {
                         text_state.content.clone()
                     })
-                    .expect("Failed to get content"),
+                    .expect("Failed to get alt node's content"),
             )));
             runner.push(Effect::HiddenInput(HiddenInputOp::SetSelectionRange {
                 start: 0,
@@ -1689,4 +1696,3 @@ pub mod document_operations {
         runner
     }
 }
-
