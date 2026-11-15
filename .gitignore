@@ -5,3 +5,5 @@
 /env/*
 !/env/.stub
 /.cargo/config
+/worktrees/* 
+!/worktrees/.stub

@@ -56,3 +56,10 @@ function docker_clean_everything(){
 	docker network ls -q | grep -v '^bridge$\|^host$\|^none$' | xargs -r docker network rm
 }
 
+function deepseek_harness(){
+    local CUR_CWD="$CWD";
+    cd ~/Documents/langs/js/deepseek-harness
+    pnpm dsh web &
+    cd "$CUR_CWD"
+}
+
