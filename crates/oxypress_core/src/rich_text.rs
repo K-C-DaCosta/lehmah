@@ -1755,14 +1755,31 @@ pub mod document_operations {
         });
         helpers.delete_node(current_line);
 
-        let merged_child_count = previous_line_children.len() + current_line_children.len();
-        let (new_focused_node, new_caret) = if junction_content.is_empty() && merged_child_count > 1
-        {
-            helpers.delete_node(junction_node);
-            (current_line_children[0], RichOffset::zero())
-        } else {
-            (junction_node, junction_caret)
+        let merged_line_children = helpers.node_info(previous_line, |info| info.children.to_vec());
+        let text_node_is_empty = |node: Ptr<RichTag>| {
+            helpers
+                .try_get_text_state(node, |text_state| text_state.content.is_empty())
+                .unwrap_or(false)
         };
+
+        let caret_anchor = if !junction_content.is_empty() {
+            (junction_node, junction_caret)
+        } else {
+            current_line_children
+                .iter()
+                .copied()
+                .find(|node| !text_node_is_empty(*node))
+                .map(|node| (node, RichOffset::zero()))
+                .unwrap_or((junction_node, RichOffset::zero()))
+        };
+
+        merged_line_children
+            .iter()
+            .copied()
+            .filter(|node| *node != caret_anchor.0 && text_node_is_empty(*node))
+            .for_each(|node| helpers.delete_node(node));
+
+        let (new_focused_node, new_caret) = caret_anchor;
 
         let focused_content = helpers
             .try_get_text_state(new_focused_node, |text_state| text_state.content.clone())
