@@ -213,28 +213,18 @@ pub fn RichTextArea() -> Html {
                     match focused_node_type {
                         RichNodeKind::Text(focused_node_state) => match e.key().as_str() {
                             "Backspace" => {
-                                let focused_node_extra_state = helpers
-                                    .try_get_extra_text_state(focused_node, |extra_text_state| {
-                                        extra_text_state.clone()
-                                    })
-                                    .expect("Failed to get extra text state");
-
-                                if let TextSelectionKind::Caret(caret) =
-                                    focused_node_extra_state.selection
-                                {
-                                    if caret.utf8 == 0 {
-                                        e.prevent_default();
-                                        let runner = state.runner(|e| {
-                                            wasm_syscalls::effect_handler(e, input_elem.clone())
-                                        });
-                                        document_operations::merge_current_line_into_previous_line_at_caret(
-                                            &mut state,
-                                            focused_node,
-                                            document_selection,
-                                            runner,
-                                        ).drain();
-                                    }
-                                }
+                                let mut prevent_default = || e.prevent_default();
+                                let runner = state.runner(|effect| {
+                                    wasm_syscalls::effect_handler(effect, input_elem.clone())
+                                });
+                                document_operations::before_backspace(
+                                    &mut state,
+                                    focused_node,
+                                    document_selection,
+                                    runner,
+                                    &mut prevent_default,
+                                )
+                                .drain();
                             }
                             "Enter" => {
                                 let runner = state.runner(|e| {

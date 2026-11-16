@@ -1805,4 +1805,170 @@ pub mod document_operations {
         }));
         runner
     }
+
+    fn place_caret<F>(
+        state: &mut TextAreaState,
+        helpers: &RichDocumentHelpers,
+        node: Ptr<RichTag>,
+        caret: RichOffset,
+        runner: EffectRunner<F>,
+    ) -> EffectRunner<F>
+    where
+        F: EffectExecutionContext,
+    {
+        let content = helpers
+            .try_get_text_state(node, |text_state| text_state.content.clone())
+            .expect("Failed to get text state");
+
+        state.flush_overlays();
+        helpers
+            .try_set_text_selection(node, TextSelectionKind::Caret(caret))
+            .expect("Failed to set text selection");
+        *state.focused_node_mut() = node;
+        *state.document_selection_mut() =
+            Some(RichSelection::mononode(node, RichRange::from_caret(caret)));
+
+        runner.push(Effect::HiddenInput(HiddenInputOp::SetValue(content)));
+        runner.push(Effect::HiddenInput(HiddenInputOp::SetSelectionRange {
+            start: caret.utf8 as u32,
+            end: caret.utf8 as u32,
+        }));
+        runner
+    }
+
+    fn text_node_end(helpers: &RichDocumentHelpers, node: Ptr<RichTag>) -> RichOffset {
+        let content = helpers
+            .try_get_text_state(node, |text_state| text_state.content.clone())
+            .expect("Failed to get text state");
+        RichOffset::from_utf8_offset(&content, content.len())
+    }
+
+    pub fn before_backspace<F>(
+        state: &mut TextAreaState,
+        focused_node: Ptr<RichTag>,
+        document_selection: RichSelection,
+        runner: EffectRunner<F>,
+        prevent_default: &mut dyn FnMut(),
+    ) -> EffectRunner<F>
+    where
+        F: EffectExecutionContext,
+    {
+        let selection_is_caret = document_selection.start_node == focused_node
+            && document_selection.start_offset == document_selection.end_offset;
+        if !selection_is_caret {
+            return runner;
+        }
+
+        let helpers = state.document_helpers();
+        let focused_content = helpers
+            .try_get_text_state(focused_node, |text_state| text_state.content.clone())
+            .expect("Failed to get focused text state");
+        let line = helpers.node_info(focused_node, |info| info.parent);
+        let line_children = helpers.node_info(line, |info| info.children.to_vec());
+        let focused_position = line_children
+            .iter()
+            .position(|node| *node == focused_node)
+            .expect("Focused node is not part of its line");
+
+        if document_selection.start_offset.utf8 > 0 {
+            let caret = document_selection.start_offset;
+            let previous_character_start = focused_content[..caret.utf8]
+                .char_indices()
+                .next_back()
+                .map(|(index, _)| index)
+                .expect("Caret is not past the start of the content");
+            let focused_node_empties =
+                previous_character_start == 0 && focused_content.len() == caret.utf8;
+            if !focused_node_empties || line_children.len() == 1 {
+                return runner;
+            }
+
+            prevent_default();
+            let has_previous_sibling = focused_position > 0;
+            let anchor = if has_previous_sibling {
+                line_children[focused_position - 1]
+            } else {
+                line_children[focused_position + 1]
+            };
+            let anchor_caret = if has_previous_sibling {
+                text_node_end(&helpers, anchor)
+            } else {
+                RichOffset::zero()
+            };
+            helpers.delete_node(focused_node);
+            return place_caret(state, &helpers, anchor, anchor_caret, runner);
+        }
+
+        prevent_default();
+
+        if focused_content.is_empty() {
+            if line_children.len() > 1 {
+                let has_previous_sibling = focused_position > 0;
+                let anchor = if has_previous_sibling {
+                    line_children[focused_position - 1]
+                } else {
+                    line_children[focused_position + 1]
+                };
+                let anchor_caret = if has_previous_sibling {
+                    text_node_end(&helpers, anchor)
+                } else {
+                    RichOffset::zero()
+                };
+                helpers.delete_node(focused_node);
+                return place_caret(state, &helpers, anchor, anchor_caret, runner);
+            }
+
+            return merge_current_line_into_previous_line_at_caret(
+                state,
+                focused_node,
+                document_selection,
+                runner,
+            );
+        }
+
+        if focused_position == 0 {
+            return merge_current_line_into_previous_line_at_caret(
+                state,
+                focused_node,
+                document_selection,
+                runner,
+            );
+        }
+
+        let previous_node = line_children[focused_position - 1];
+        let previous_content = helpers
+            .try_get_text_state(previous_node, |text_state| text_state.content.clone())
+            .expect("Failed to get previous text state");
+        let last_character_start = previous_content
+            .char_indices()
+            .next_back()
+            .map(|(index, _)| index)
+            .expect("Previous node content is not empty");
+
+        if last_character_start == 0 {
+            let has_node_before_previous = focused_position >= 2;
+            let anchor = if has_node_before_previous {
+                line_children[focused_position - 2]
+            } else {
+                focused_node
+            };
+            let anchor_caret = if has_node_before_previous {
+                text_node_end(&helpers, anchor)
+            } else {
+                RichOffset::zero()
+            };
+            helpers.delete_node(previous_node);
+            return place_caret(state, &helpers, anchor, anchor_caret, runner);
+        }
+
+        let mut trimmed_content = previous_content;
+        trimmed_content.truncate(last_character_start);
+        let caret = RichOffset::from_utf8_offset(&trimmed_content, last_character_start);
+        helpers
+            .try_get_text_state_mut(previous_node, |text_state| {
+                text_state.content = trimmed_content;
+            })
+            .expect("Failed to set previous text state");
+        place_caret(state, &helpers, previous_node, caret, runner)
+    }
 }
