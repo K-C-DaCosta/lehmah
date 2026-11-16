@@ -124,6 +124,7 @@ impl Harness {
         // this involves possibly traversing adjacent nodes,etc,
         // much more complicated than simply removing a character from
         // a text node. More edge cases, tests should show you how it works.
+
     }
 
     pub fn enter(&mut self) {
