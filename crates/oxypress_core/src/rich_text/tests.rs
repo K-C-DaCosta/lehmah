@@ -165,13 +165,17 @@ impl Harness {
     // this function simulates what happens when you press
     // backspace on an `HtmlInputElement`, it only cares
     // about how the caret moves WITHIN the node
-    pub fn simulate_hidden_input_backspace<F: Fn(&mut Self, &mut bool)>(
+    pub fn simulate_hidden_input_backspace<F, PD>(
         &mut self,
-        before_backspace: F,
-    ) {
-        let mut prevent_default = false;
-        before_backspace(self, &mut prevent_default);
-        if prevent_default {
+        prevent_default: &mut bool,
+        prevent_default_cb: PD,
+        mut before_backspace: F,
+    ) where
+        F: FnMut(&mut Self, PD),
+        PD: FnMut(),
+    {
+        before_backspace(self, prevent_default_cb);
+        if *prevent_default {
             return;
         }
 
@@ -215,63 +219,53 @@ impl Harness {
     }
 
     pub fn backspace(&mut self) {
-        self.simulate_hidden_input_backspace(|harness, prevent_default| {
-            let focused_node = *harness.ta_state.focused_node();
-            let document_selection = harness
-                .ta_state
-                .document_selection()
-                .expect("Failed to get document selection");
-            let selection_is_caret = document_selection.start_node == focused_node
-                && document_selection.start_offset == document_selection.end_offset;
-            if !selection_is_caret {
-                return;
+        let mut prevent_default = false;
+        let prevent_default_clone = &mut prevent_default as *mut bool; 
+        let prevent_default_cb = || {
+            unsafe {
+                *prevent_default_clone = true; 
             }
-
-            let caret = document_selection.start_offset;
-            let helpers = harness.ta_state.document_helpers();
-            let focused_content = helpers
-                .try_get_text_state(focused_node, |text_state| text_state.content.clone())
-                .expect("Failed to get focused text state");
-            let line = helpers.node_info(focused_node, |info| info.parent);
-            let line_children = helpers.node_info(line, |info| info.children.to_vec());
-            let focused_position = line_children
-                .iter()
-                .position(|node| *node == focused_node)
-                .expect("Focused node is not part of its line");
-
-            if caret.utf8 > 0 {
-                let previous_character_start = focused_content[..caret.utf8]
-                    .char_indices()
-                    .next_back()
-                    .map(|(index, _)| index)
-                    .expect("Caret is not past the start of the content");
-                let focused_node_empties =
-                    previous_character_start == 0 && focused_content.len() == caret.utf8;
-                if !focused_node_empties || line_children.len() == 1 {
+        };
+        self.simulate_hidden_input_backspace(
+            &mut prevent_default,
+            prevent_default_cb,
+            |harness, mut prevent_default| {
+                let focused_node = *harness.ta_state.focused_node();
+                let document_selection = harness
+                    .ta_state
+                    .document_selection()
+                    .expect("Failed to get document selection");
+                let selection_is_caret = document_selection.start_node == focused_node
+                    && document_selection.start_offset == document_selection.end_offset;
+                if !selection_is_caret {
                     return;
                 }
 
-                *prevent_default = true;
-                let has_previous_sibling = focused_position > 0;
-                let anchor = if has_previous_sibling {
-                    line_children[focused_position - 1]
-                } else {
-                    line_children[focused_position + 1]
-                };
-                let anchor_caret = if has_previous_sibling {
-                    text_node_end(&harness.ta_state, anchor)
-                } else {
-                    RichOffset::zero()
-                };
-                helpers.delete_node(focused_node);
-                place_caret(&mut harness.ta_state, anchor, anchor_caret);
-                return;
-            }
+                let caret = document_selection.start_offset;
+                let helpers = harness.ta_state.document_helpers();
+                let focused_content = helpers
+                    .try_get_text_state(focused_node, |text_state| text_state.content.clone())
+                    .expect("Failed to get focused text state");
+                let line = helpers.node_info(focused_node, |info| info.parent);
+                let line_children = helpers.node_info(line, |info| info.children.to_vec());
+                let focused_position = line_children
+                    .iter()
+                    .position(|node| *node == focused_node)
+                    .expect("Focused node is not part of its line");
 
-            *prevent_default = true;
+                if caret.utf8 > 0 {
+                    let previous_character_start = focused_content[..caret.utf8]
+                        .char_indices()
+                        .next_back()
+                        .map(|(index, _)| index)
+                        .expect("Caret is not past the start of the content");
+                    let focused_node_empties =
+                        previous_character_start == 0 && focused_content.len() == caret.utf8;
+                    if !focused_node_empties || line_children.len() == 1 {
+                        return;
+                    }
 
-            if focused_content.is_empty() {
-                if line_children.len() > 1 {
+                    prevent_default();
                     let has_previous_sibling = focused_position > 0;
                     let anchor = if has_previous_sibling {
                         line_children[focused_position - 1]
@@ -288,64 +282,85 @@ impl Harness {
                     return;
                 }
 
-                let runner = harness.ta_state.runner(|_| None);
-                document_operations::merge_current_line_into_previous_line_at_caret(
-                    &mut harness.ta_state,
-                    focused_node,
-                    document_selection,
-                    runner,
-                );
-                return;
-            }
+                prevent_default();
 
-            if focused_position == 0 {
-                let runner = harness.ta_state.runner(|_| None);
-                document_operations::merge_current_line_into_previous_line_at_caret(
-                    &mut harness.ta_state,
-                    focused_node,
-                    document_selection,
-                    runner,
-                );
-                return;
-            }
+                if focused_content.is_empty() {
+                    if line_children.len() > 1 {
+                        let has_previous_sibling = focused_position > 0;
+                        let anchor = if has_previous_sibling {
+                            line_children[focused_position - 1]
+                        } else {
+                            line_children[focused_position + 1]
+                        };
+                        let anchor_caret = if has_previous_sibling {
+                            text_node_end(&harness.ta_state, anchor)
+                        } else {
+                            RichOffset::zero()
+                        };
+                        helpers.delete_node(focused_node);
+                        place_caret(&mut harness.ta_state, anchor, anchor_caret);
+                        return;
+                    }
 
-            let previous_node = line_children[focused_position - 1];
-            let previous_content = helpers
-                .try_get_text_state(previous_node, |text_state| text_state.content.clone())
-                .expect("Failed to get previous text state");
-            let last_character_start = previous_content
-                .char_indices()
-                .next_back()
-                .map(|(index, _)| index)
-                .expect("Previous node content is not empty");
+                    let runner = harness.ta_state.runner(|_| None);
+                    document_operations::merge_current_line_into_previous_line_at_caret(
+                        &mut harness.ta_state,
+                        focused_node,
+                        document_selection,
+                        runner,
+                    );
+                    return;
+                }
 
-            if last_character_start == 0 {
-                let has_node_before_previous = focused_position >= 2;
-                let anchor = if has_node_before_previous {
-                    line_children[focused_position - 2]
-                } else {
-                    focused_node
-                };
-                let anchor_caret = if has_node_before_previous {
-                    text_node_end(&harness.ta_state, anchor)
-                } else {
-                    RichOffset::zero()
-                };
-                helpers.delete_node(previous_node);
-                place_caret(&mut harness.ta_state, anchor, anchor_caret);
-                return;
-            }
+                if focused_position == 0 {
+                    let runner = harness.ta_state.runner(|_| None);
+                    document_operations::merge_current_line_into_previous_line_at_caret(
+                        &mut harness.ta_state,
+                        focused_node,
+                        document_selection,
+                        runner,
+                    );
+                    return;
+                }
 
-            let mut trimmed_content = previous_content;
-            trimmed_content.truncate(last_character_start);
-            let caret = RichOffset::from_utf8_offset(&trimmed_content, last_character_start);
-            helpers
-                .try_get_text_state_mut(previous_node, |text_state| {
-                    text_state.content = trimmed_content;
-                })
-                .expect("Failed to set previous text state");
-            place_caret(&mut harness.ta_state, previous_node, caret);
-        });
+                let previous_node = line_children[focused_position - 1];
+                let previous_content = helpers
+                    .try_get_text_state(previous_node, |text_state| text_state.content.clone())
+                    .expect("Failed to get previous text state");
+                let last_character_start = previous_content
+                    .char_indices()
+                    .next_back()
+                    .map(|(index, _)| index)
+                    .expect("Previous node content is not empty");
+
+                if last_character_start == 0 {
+                    let has_node_before_previous = focused_position >= 2;
+                    let anchor = if has_node_before_previous {
+                        line_children[focused_position - 2]
+                    } else {
+                        focused_node
+                    };
+                    let anchor_caret = if has_node_before_previous {
+                        text_node_end(&harness.ta_state, anchor)
+                    } else {
+                        RichOffset::zero()
+                    };
+                    helpers.delete_node(previous_node);
+                    place_caret(&mut harness.ta_state, anchor, anchor_caret);
+                    return;
+                }
+
+                let mut trimmed_content = previous_content;
+                trimmed_content.truncate(last_character_start);
+                let caret = RichOffset::from_utf8_offset(&trimmed_content, last_character_start);
+                helpers
+                    .try_get_text_state_mut(previous_node, |text_state| {
+                        text_state.content = trimmed_content;
+                    })
+                    .expect("Failed to set previous text state");
+                place_caret(&mut harness.ta_state, previous_node, caret);
+            },
+        );
     }
 
     pub fn enter(&mut self) {
@@ -397,7 +412,6 @@ impl Harness {
         self.ta_state.to_notation()
     }
 }
-
 
 fn place_caret(state: &mut TextAreaState, node: Ptr<RichTag>, caret: RichOffset) {
     let helpers = state.document_helpers();
@@ -620,21 +634,48 @@ mod plain_line {
         }
         #[test]
         fn simulate_hidden_input() {
+            let mut prevent_default = false;
             let mut doc = Harness::plain_line();
-            let handler_nop = |_: &mut Harness, _: &mut bool| ();
+            let handler_nop = |_: &mut Harness, _| ();
+            let mut prevent_default_cb_nop = || ();
             doc.click_on_caret();
-            doc.simulate_hidden_input_backspace(handler_nop);
+
+            doc.simulate_hidden_input_backspace(
+                &mut prevent_default,
+                prevent_default_cb_nop,
+                handler_nop,
+            );
             assert_eq!(doc.notation(), to_flat(["Hell| World"]));
-            doc.simulate_hidden_input_backspace(handler_nop);
+            doc.simulate_hidden_input_backspace(
+                &mut prevent_default,
+                prevent_default_cb_nop,
+                handler_nop,
+            );
             assert_eq!(doc.notation(), to_flat(["Hel| World"]));
-            doc.simulate_hidden_input_backspace(handler_nop);
+            doc.simulate_hidden_input_backspace(
+                &mut prevent_default,
+                prevent_default_cb_nop,
+                handler_nop,
+            );
             assert_eq!(doc.notation(), to_flat(["He| World"]));
-            doc.simulate_hidden_input_backspace(handler_nop);
+            doc.simulate_hidden_input_backspace(
+                &mut prevent_default,
+                prevent_default_cb_nop,
+                handler_nop,
+            );
             assert_eq!(doc.notation(), to_flat(["H| World"]));
-            doc.simulate_hidden_input_backspace(handler_nop);
+            doc.simulate_hidden_input_backspace(
+                &mut prevent_default,
+                prevent_default_cb_nop,
+                handler_nop,
+            );
             assert_eq!(doc.notation(), to_flat(["| World"]));
             for _ in 0..512 {
-                doc.simulate_hidden_input_backspace(handler_nop);
+                doc.simulate_hidden_input_backspace(
+                    &mut prevent_default,
+                    prevent_default_cb_nop,
+                    handler_nop,
+                );
             }
             assert_eq!(doc.notation(), to_flat(["| World"]));
         }
