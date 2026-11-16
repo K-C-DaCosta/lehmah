@@ -118,13 +118,19 @@ impl Harness {
 
     pub fn backspace(&mut self) {
         self.simulate_hidden_input_backspace();
-        // AGENT HINT: we need to do more stuff
-        // after this to actually handle the case where
-        // HiddenInputElement has no more text left to delete
-        // this involves possibly traversing adjacent nodes,etc,
-        // much more complicated than simply removing a character from
-        // a text node. More edge cases, tests should show you how it works.
 
+        let ta_state = &mut self.ta_state;
+        let local_focused_node = *ta_state.focused_node();
+        let local_document_selection = ta_state
+            .document_selection()
+            .expect("Failed to get document selection");
+        let runner = ta_state.runner(|_| None);
+        document_operations::merge_current_line_into_previous_line_at_caret(
+            ta_state,
+            local_focused_node,
+            local_document_selection,
+            runner,
+        );
     }
 
     pub fn enter(&mut self) {

@@ -1695,4 +1695,97 @@ pub mod document_operations {
         }
         runner
     }
+
+    pub fn merge_current_line_into_previous_line_at_caret<F>(
+        state: &mut TextAreaState,
+        focused_node: Ptr<RichTag>,
+        document_selection: RichSelection,
+        runner: EffectRunner<F>,
+    ) -> EffectRunner<F>
+    where
+        F: EffectExecutionContext,
+    {
+        let helpers = state.document_helpers();
+
+        let caret_is_at_node_start = document_selection.start_node == focused_node
+            && document_selection.start_offset.utf8 == 0;
+        if !caret_is_at_node_start {
+            return runner;
+        }
+
+        let current_line = helpers.node_info(focused_node, |info| info.parent);
+        let current_line_children =
+            helpers.node_info(current_line, |info| info.children.to_vec());
+        let focused_node_opens_the_line = current_line_children.first() == Some(&focused_node);
+        if !focused_node_opens_the_line || current_line_children.is_empty() {
+            return runner;
+        }
+
+        let document_children = helpers.node_info(state.document, |info| info.children.to_vec());
+        let Some(current_line_position) = document_children
+            .iter()
+            .position(|line| *line == current_line)
+        else {
+            return runner;
+        };
+        if current_line_position == 0 {
+            return runner;
+        }
+
+        let previous_line = document_children[current_line_position - 1];
+        let previous_line_children =
+            helpers.node_info(previous_line, |info| info.children.to_vec());
+        let Some(junction_node) = previous_line_children.last().copied() else {
+            return runner;
+        };
+
+        let junction_content = helpers
+            .try_get_text_state(junction_node, |text_state| text_state.content.clone())
+            .expect("Failed to get junction text state");
+        let junction_caret =
+            RichOffset::from_utf8_offset(&junction_content, junction_content.len());
+
+        current_line_children
+            .iter()
+            .for_each(|child| helpers.forest_mut().add_child(previous_line, *child));
+        helpers.node_info_mut(current_line, |info| {
+            for _ in 0..current_line_children.len() {
+                info.children.pop();
+            }
+        });
+        helpers.delete_node(current_line);
+
+        let merged_child_count = previous_line_children.len() + current_line_children.len();
+        let (new_focused_node, new_caret) = if junction_content.is_empty() && merged_child_count > 1
+        {
+            helpers.delete_node(junction_node);
+            (current_line_children[0], RichOffset::zero())
+        } else {
+            (junction_node, junction_caret)
+        };
+
+        let focused_content = helpers
+            .try_get_text_state(new_focused_node, |text_state| text_state.content.clone())
+            .expect("Failed to get focused text state");
+
+        state.flush_overlays();
+        helpers
+            .try_set_text_selection(new_focused_node, TextSelectionKind::Caret(new_caret))
+            .expect("Failed to set text selection");
+
+        *state.focused_node_mut() = new_focused_node;
+        *state.document_selection_mut() = Some(RichSelection::mononode(
+            new_focused_node,
+            RichRange::from_caret(new_caret),
+        ));
+
+        runner.push(Effect::HiddenInput(HiddenInputOp::SetValue(
+            focused_content,
+        )));
+        runner.push(Effect::HiddenInput(HiddenInputOp::SetSelectionRange {
+            start: new_caret.utf8 as u32,
+            end: new_caret.utf8 as u32,
+        }));
+        runner
+    }
 }
