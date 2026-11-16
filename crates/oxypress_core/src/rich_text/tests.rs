@@ -49,8 +49,42 @@ impl Harness {
     // this function simulates what happens when you press
     // backspace on an `HtmlInputElement`, it only cares
     // about how the caret moves WITHIN the node
-    pub fn simulate_hidden_input_backspace(&mut self){
+    pub fn simulate_hidden_input_backspace(&mut self) {
+        let ta_state = &mut self.ta_state;
+        let focused_node = *ta_state.focused_node();
+        let helpers = ta_state.document_helpers();
 
+        let caret = helpers
+            .try_get_extra_text_state(focused_node, |extra_text_state| extra_text_state.selection)
+            .expect("Failed to get text selection")
+            .as_caret()
+            .expect("Expected a caret selection");
+
+        if caret.utf8 == 0 {
+            return;
+        }
+
+        let mut content = helpers
+            .try_get_text_state(focused_node, |text_state| text_state.content.clone())
+            .expect("Failed to get text state");
+
+        let previous_character_start = content[..caret.utf8]
+            .char_indices()
+            .next_back()
+            .map(|(index, _)| index)
+            .expect("Caret is not past the start of the content");
+
+        content.replace_range(previous_character_start..caret.utf8, "");
+        let caret = RichOffset::from_utf8_offset(&content, previous_character_start);
+
+        helpers
+            .try_get_text_state_mut(focused_node, |text_state| text_state.content = content)
+            .expect("Failed to set text state");
+        helpers
+            .try_set_text_selection(focused_node, TextSelectionKind::Caret(caret))
+            .expect("Failed to set text selection");
+        *ta_state.document_selection_mut() =
+            Some(RichSelection::mononode(focused_node, RichRange::from_caret(caret)));
     }
 
     pub fn enter(&mut self) {
