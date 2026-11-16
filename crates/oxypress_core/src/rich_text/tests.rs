@@ -35,6 +35,63 @@ impl Harness {
         area.document = document;
         Self { ta_state: area }
     }
+    fn multiple_styles_in_on_line() -> Self {
+        let mut area = TextAreaState::new();
+        let helpers = area.document_helpers();
+        /* Hardcoded AST:
+         * --------------
+         *  Document
+         *  ..Line
+         *  ....Text('Hel')
+         *  ....Text('lo Wo')
+         *  ....Text('rld')
+         *  -------------
+         * */
+        let sample_text = "Hello World";
+        let document = helpers.create_document_node();
+        let line_container = helpers.create_line_node();
+        let left_text_node = helpers.create_text_node(
+            TextState {
+                content: String::from(&sample_text[0..3]),
+                styling: InlineStyling::UNSTYLED,
+            },
+            ExtraTextState {
+                selection: TextSelectionKind::Unselected,
+            },
+        );
+        let middle_text_node = helpers.create_text_node(
+            TextState {
+                content: String::from(&sample_text[3..8]),
+                styling: InlineStyling::ITALICS,
+            },
+            ExtraTextState {
+                selection: TextSelectionKind::Unselected,
+            },
+        );
+        let tail_text_node = helpers.create_text_node(
+            TextState {
+                content: String::from(&sample_text[8..]),
+                styling: InlineStyling::BOLD,
+            },
+            ExtraTextState {
+                selection: TextSelectionKind::Caret(RichOffset::from_utf8_offset(sample_text, 2)),
+            },
+        );
+
+        helpers.forest_mut().add_child(document, line_container);
+        helpers
+            .forest_mut()
+            .add_child(line_container, left_text_node);
+        helpers
+            .forest_mut()
+            .add_child(line_container, middle_text_node);
+        helpers
+            .forest_mut()
+            .add_child(line_container, tail_text_node);
+
+        area.document = document;
+        Self { ta_state: area }
+    }
     fn plain_line() -> Self {
         let mut area = TextAreaState::new();
         let helpers = area.document_helpers();
@@ -59,6 +116,38 @@ impl Harness {
         );
         helpers.forest_mut().add_child(document, line_container);
         helpers.forest_mut().add_child(line_container, text_node);
+        area.document = document;
+        Self { ta_state: area }
+    }
+    fn split_line() -> Self {
+        let mut area = TextAreaState::new();
+        let helpers = area.document_helpers();
+
+        let sample_text = "Hello World";
+        let document = helpers.create_document_node();
+        let line_container = helpers.create_line_node();
+        let text_node = helpers.create_text_node(
+            TextState {
+                content: String::from(&sample_text[0..sample_text.len() - 1]),
+                styling: InlineStyling::UNSTYLED,
+            },
+            ExtraTextState {
+                selection: TextSelectionKind::Unselected,
+            },
+        );
+        let right_node = helpers.create_text_node(
+            TextState {
+                content: String::from(&sample_text[sample_text.len() - 1..]),
+                styling: InlineStyling::BOLD,
+            },
+            ExtraTextState {
+                selection: TextSelectionKind::Caret(RichOffset::from_utf8_offset(sample_text, 1)),
+            },
+        );
+
+        helpers.forest_mut().add_child(document, line_container);
+        helpers.forest_mut().add_child(line_container, text_node);
+        helpers.forest_mut().add_child(line_container, right_node);
         area.document = document;
         Self { ta_state: area }
     }
@@ -161,9 +250,9 @@ impl Harness {
             .find(|(node, kind)| {
                 helpers
                     .forest_content()
-                    .get(&node)
+                    .get(node)
                     .and_then(RichAuxData::as_text)
-                    .map(ExtraTextState::has_caret)
+                    .and_then(|ets| ets.selection.as_caret())
                     .is_some()
             })
             .expect("Failed to find text node with caret");
@@ -175,7 +264,7 @@ impl Harness {
             .expect("Failed to get selection")
             .as_caret()
             .map(RichRange::from_caret)
-            .expect("Faield to convert to range");
+            .expect("Failed to convert to range");
         (text_node_with_caret, caret_range)
     }
     fn notation(&self) -> String {
@@ -189,6 +278,60 @@ pub fn to_flat<T: AsRef<[&'static str]>>(lines: T) -> String {
         .iter()
         .map(|line| format!("{}\n", line))
         .collect()
+}
+mod split_line {
+    use super::*;
+
+    #[test]
+    fn sample() {
+        let doc = Harness::split_line();
+        assert_eq!(doc.notation(), to_flat(["Hello Worl<b>d|</b>"]));
+    }
+
+    #[test]
+    fn delete_single_character() {
+        let mut doc = Harness::split_line();
+        doc.click_on_caret();
+        doc.backspace();
+        assert_eq!(doc.notation(), to_flat(["Hello Worl|"]));
+    }
+}
+
+mod multistyled_line {
+    use super::*;
+
+    #[test]
+    fn sample() {
+        let doc = Harness::multiple_styles_in_on_line();
+        assert_eq!(doc.notation(), to_flat(["Hel<i>lo Wo</i><b>rl|d</b>"]));
+    }
+
+    #[test]
+    fn backspace() {
+        let mut doc = Harness::multiple_styles_in_on_line();
+        doc.click_on_caret();
+        assert_eq!(doc.notation(), to_flat(["Hel<i>lo Wo</i><b>rl|d</b>"]));
+        doc.backspace();
+        assert_eq!(doc.notation(), to_flat(["Hel<i>lo Wo</i><b>r|d</b>"]));
+        doc.backspace();
+        assert_eq!(doc.notation(), to_flat(["Hel<i>lo Wo</i><b>|d</b>"]));
+        doc.backspace();
+        assert_eq!(doc.notation(), to_flat(["Hel<i>lo W|</i><b>d</b>"]));
+        doc.backspace();
+        assert_eq!(doc.notation(), to_flat(["Hel<i>lo |</i><b>d</b>"]));
+        doc.backspace();
+        assert_eq!(doc.notation(), to_flat(["Hel<i>lo|</i><b>d</b>"]));
+        doc.backspace();
+        assert_eq!(doc.notation(), to_flat(["Hel<i>l|</i><b>d</b>"]));
+        doc.backspace();
+        assert_eq!(doc.notation(), to_flat(["Hel|<b>d</b>"]));
+        doc.backspace();
+        assert_eq!(doc.notation(), to_flat(["He|<b>d</b>"]));
+        doc.backspace();
+        assert_eq!(doc.notation(), to_flat(["H|<b>d</b>"]));
+        doc.backspace();
+        assert_eq!(doc.notation(), to_flat(["<b>|d</b>"]));
+    }
 }
 mod empty_line {
     use crate::rich_text::tests::{to_flat, Harness};
