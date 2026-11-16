@@ -45,15 +45,12 @@ impl Harness {
         *area.document_selection_mut() = Some(local_document_selection);
     }
 
-    pub fn backspace(&mut self) {
-        let helpers = self.ta_state.document_helpers();
-        let focused_node = *self.ta_state.focused_node();
-        let text_state = helpers
-            .try_get_text_state(focused_node, |ts| ts.clone())
-            .expect("Failed to get text_state");
-        let extra_text_state = helpers
-            .try_get_extra_text_state(focused_node, |ets| ets.clone())
-            .expect("Failed to get extra text state");
+    // # Description 
+    // this function simulates what happens when you press
+    // backspace on an `HtmlInputElement`, it only cares
+    // about how the caret moves WITHIN the node
+    pub fn simulate_hidden_input_backspace(&mut self){
+
     }
 
     pub fn enter(&mut self) {
@@ -164,7 +161,7 @@ mod plain_line {
     use super::*;
     #[test]
     fn sample() {
-        let mut doc = Harness::plain_line();
+        let doc = Harness::plain_line();
         #[rustfmt::skip]
         assert_eq!(doc.notation(), to_flat([
             "Hello| World"
@@ -173,18 +170,24 @@ mod plain_line {
 
     mod backspace {
         use super::*;
-        fn backspace_hello() {
+
+        #[test]
+        fn simulate_hidden_input() {
             let mut doc = Harness::plain_line();
             doc.click_on_caret();
-            doc.backspace();
+            doc.simulate_hidden_input_backspace();
             assert_eq!(doc.notation(), to_flat(["Hell| World"]));
-            doc.backspace();
+            doc.simulate_hidden_input_backspace();
             assert_eq!(doc.notation(), to_flat(["Hel| World"]));
-            doc.backspace();
+            doc.simulate_hidden_input_backspace();
             assert_eq!(doc.notation(), to_flat(["He| World"]));
-            doc.backspace();
+            doc.simulate_hidden_input_backspace();
             assert_eq!(doc.notation(), to_flat(["H| World"]));
-            doc.backspace();
+            doc.simulate_hidden_input_backspace();
+            assert_eq!(doc.notation(), to_flat(["| World"]));
+            for _ in 0..512 {
+                doc.simulate_hidden_input_backspace();
+            }
             assert_eq!(doc.notation(), to_flat(["| World"]));
         }
     }
