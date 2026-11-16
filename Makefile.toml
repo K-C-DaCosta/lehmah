@@ -31,7 +31,7 @@ workspace = false
 command = "cargo"
 args = ["run","-p","run-tests","--","${@}"]
 env = { "RUSTFLAGS" = "-A warnings" } 
-description = "A custom rust-script in the /scripts directory runs tests with warnings supressesd."
+description = "A custom rust-script in the /scripts directory runs every crate's tests; arguments filter test names only."
 
 [tasks.run-tests-miri]
 workspace = false 
