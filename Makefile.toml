@@ -29,7 +29,7 @@ description = "Enables you to call sqlx commands for oxypress from root"
 [tasks.run-tests]
 workspace = false 
 command = "cargo"
-args = ["run","-p","run-tests","${@}"]
+args = ["run","-p","run-tests","--","${@}"]
 env = { "RUSTFLAGS" = "-A warnings" } 
 description = "A custom rust-script in the /scripts directory runs tests with warnings supressesd."
 
