@@ -30,3 +30,11 @@ to work in, simply ask.
 comments can go stale. 
 - Don't modify tests, but if think you see a problem, address it with a human
 
+
+# Commit authorship
+- Agent commits carry the model's identity, never the human's:
+  `Author: <model> (agent) <agent@localhost>`, e.g. `deepseek-flash (agent)`.
+- Prefix every agent commit subject with `[AI-GENERATED]`.
+- Pass the identity per commit (`git -c user.name=... -c user.email=... commit`);
+  do not set it in the shared repo or worktree config, since that would also
+  rewrite the human's identity.
