@@ -5,5 +5,5 @@ members = [
     "crates/oxypress_web_client",
     "services/oxypress_web_server",
     "scripts/gen_local_certs"
-]
+, "scripts/run-tests"]
 

@@ -1057,7 +1057,7 @@ where
 
     pub fn drain(mut self) {
         for effect in self.effect_buffer.borrow_mut().drain(..) {
-            if let Some(cmd) = (self.apply)(&effect) {}
+            let _ = (self.apply)(&effect);
         }
     }
 

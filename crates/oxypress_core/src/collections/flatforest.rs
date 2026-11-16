@@ -1,7 +1,6 @@
 use std::{
     mem::MaybeUninit,
     ops::{Deref, DerefMut},
-    ptr::null,
 };
 
 use crate::collections::{
