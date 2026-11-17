@@ -29,7 +29,7 @@ description = "Enables you to call sqlx commands for oxypress from root"
 [tasks.run-tests]
 workspace = false 
 command = "cargo"
-args = ["run","-p","run-tests","--","${@}"]
+args = ["run","-p","run-tests","--target=x86_64-unknown-linux-gnu","${@}"]
 env = { "RUSTFLAGS" = "-A warnings" } 
 description = "A custom rust-script in the /scripts directory runs every crate's tests; arguments filter test names only."
 
@@ -152,7 +152,7 @@ OXYPRESS_WEB_DATABASE_URL = "postgres://testdev:testdev@localhost:5432/oxypress_
 [tasks.enter_oxypress_db_dev]
 workspace = false
 command = "psql"
-args = [ "-h", "localhost", "-U", "testdev", "oxypress_dev" ]
+args = [ "-h", "localhost", "-U", "testdev", "oxypress_dev"]
 
 [tasks.build-web-server]
 workspace = false 

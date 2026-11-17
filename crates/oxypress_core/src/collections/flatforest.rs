@@ -178,8 +178,14 @@ impl<Tag, T> FlatForest<Tag, T> {
     }
 
     pub fn iter_mut(&mut self, root: Ptr<Tag>) -> impl Iterator<Item = (Ptr<Tag>, &mut T)> {
-        let self_ptr = self as *mut Self;
-        self.walk_iter(root, move |_, ptr| unsafe { (*self_ptr).get_data_mut(ptr) })
+        let data_base_ptr = self.data.as_mut_ptr();
+        self.walk_iter(root, move |_, ptr| unsafe {
+            data_base_ptr
+                .add(ptr.to_index())
+                .as_mut()
+                .expect("Failed to cast as mut")
+                .assume_init_mut()
+        })
     }
     pub fn iter_inclusive(
         &self,

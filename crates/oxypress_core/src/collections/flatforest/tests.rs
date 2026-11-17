@@ -1,4 +1,4 @@
-use std::char::from_u32;
+use std::{char::from_u32, collections::HashMap};
 
 use rand::RngExt;
 
@@ -203,4 +203,81 @@ fn forest_fuzz_simple() {
         );
     }
     //tree.free(nodes[2]);
+}
+mod iter_tests {
+    use super::*;
+    #[test]
+    fn immutable_walk() {
+        let mut forest = FlatForest::new();
+        // "a"
+        // .."b"
+        // ...."d"
+        // ......"f"
+        // ...."e"
+        // .."c"
+        //
+        let node_table = ["a", "b", "c", "d", "e", "f"]
+            .into_iter()
+            .map(String::from)
+            .map(|label| (label.clone(), forest.allocate_node(label)))
+            .collect::<HashMap<String, Ptr<_>>>();
+        let short_get = |key: &'static str| node_table.get(key).copied().unwrap();
+        let root = short_get("a");
+        forest.add_child(short_get("a"), short_get("b"));
+        forest.add_child(short_get("a"), short_get("c"));
+        forest.add_child(short_get("b"), short_get("d"));
+        forest.add_child(short_get("b"), short_get("e"));
+        forest.add_child(short_get("d"), short_get("f"));
+
+        let immutable_walk = forest
+            .iter(root)
+            .map(|(_, str)| str)
+            .cloned()
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            immutable_walk,
+            vec!["a", "b", "d", "f", "e", "c"]
+                .into_iter()
+                .map(String::from)
+                .collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn mutable_walk() {
+        let mut forest = FlatForest::new();
+        // "a"
+        // .."b"
+        // ...."d"
+        // ......"f"
+        // ...."e"
+        // .."c"
+        //
+        let node_table = ["a", "b", "c", "d", "e", "f"]
+            .into_iter()
+            .map(String::from)
+            .map(|label| (label.clone(), forest.allocate_node(label)))
+            .collect::<HashMap<String, Ptr<_>>>();
+        let short_get = |key: &'static str| node_table.get(key).copied().unwrap();
+        let root = short_get("a");
+        forest.add_child(short_get("a"), short_get("b"));
+        forest.add_child(short_get("a"), short_get("c"));
+        forest.add_child(short_get("b"), short_get("d"));
+        forest.add_child(short_get("b"), short_get("e"));
+        forest.add_child(short_get("d"), short_get("f"));
+
+        let mutable_walk = forest
+            .iter_mut(root)
+            .map(|(_, str)| str.clone())
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            mutable_walk,
+            vec!["a", "b", "d", "f", "e", "c"]
+                .into_iter()
+                .map(String::from)
+                .collect::<Vec<_>>()
+        );
+    }
 }
