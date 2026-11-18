@@ -1,6 +1,6 @@
-use crate::{log::ConsoleColors, loggy};
-
 use super::*;
+use crate::{log::ConsoleColors, loggy};
+use std::cell;
 
 struct Harness {
     ta_state: TextAreaState,
@@ -167,17 +167,14 @@ impl Harness {
     // this function simulates what happens when you press
     // backspace on an `HtmlInputElement`, it only cares
     // about how the caret moves WITHIN the node
-    pub fn simulate_hidden_input_backspace<F, PD>(
-        &mut self,
-        prevent_default: &mut bool,
-        prevent_default_cb: PD,
-        mut before_backspace: F,
-    ) where
-        F: FnMut(&mut Self, PD),
-        PD: FnMut(),
+    pub fn simulate_hidden_input_backspace<F>(&mut self, mut before_backspace: F)
+    where
+        F: FnMut(&mut Self, &dyn Fn()),
     {
-        before_backspace(self, prevent_default_cb);
-        if *prevent_default {
+        let prevent_default = cell::Cell::new(false);
+        let prevent_default_cb = || prevent_default.set(true);
+        before_backspace(self, &prevent_default_cb);
+        if prevent_default.get() {
             return;
         }
 
@@ -221,30 +218,21 @@ impl Harness {
     }
 
     pub fn backspace(&mut self) {
-        let mut prevent_default = false;
-        let prevent_default_clone = &mut prevent_default as *mut bool;
-        let prevent_default_cb = || unsafe {
-            *prevent_default_clone = true;
-        };
-        self.simulate_hidden_input_backspace(
-            &mut prevent_default,
-            prevent_default_cb,
-            |harness, mut prevent_default| {
-                let focused_node = *harness.ta_state.focused_node();
-                let document_selection = harness
-                    .ta_state
-                    .document_selection()
-                    .expect("Failed to get document selection");
-                let runner = harness.ta_state.runner(|_| None);
-                document_operations::before_backspace(
-                    &mut harness.ta_state,
-                    focused_node,
-                    document_selection,
-                    runner,
-                    &mut prevent_default,
-                );
-            },
-        );
+        self.simulate_hidden_input_backspace(|harness, mut prevent_default| {
+            let focused_node = *harness.ta_state.focused_node();
+            let document_selection = harness
+                .ta_state
+                .document_selection()
+                .expect("Failed to get document selection");
+            let runner = harness.ta_state.runner(|_| None);
+            document_operations::before_backspace(
+                &mut harness.ta_state,
+                focused_node,
+                document_selection,
+                runner,
+                &mut prevent_default,
+            );
+        });
     }
 
     pub fn enter(&mut self) {
@@ -694,48 +682,21 @@ mod plain_line {
         }
         #[test]
         fn simulate_hidden_input() {
-            let mut prevent_default = false;
             let mut doc = Harness::plain_line();
-            let handler_nop = |_: &mut Harness, _| ();
-            let prevent_default_cb_nop = || ();
+            let handler_nop = |_: &mut Harness, _: &dyn Fn()| ();
             doc.click_on_caret();
-
-            doc.simulate_hidden_input_backspace(
-                &mut prevent_default,
-                prevent_default_cb_nop,
-                handler_nop,
-            );
+            doc.simulate_hidden_input_backspace(handler_nop);
             assert_eq!(doc.notation(), to_flat(["Hell| World"]));
-            doc.simulate_hidden_input_backspace(
-                &mut prevent_default,
-                prevent_default_cb_nop,
-                handler_nop,
-            );
+            doc.simulate_hidden_input_backspace(handler_nop);
             assert_eq!(doc.notation(), to_flat(["Hel| World"]));
-            doc.simulate_hidden_input_backspace(
-                &mut prevent_default,
-                prevent_default_cb_nop,
-                handler_nop,
-            );
+            doc.simulate_hidden_input_backspace(handler_nop);
             assert_eq!(doc.notation(), to_flat(["He| World"]));
-            doc.simulate_hidden_input_backspace(
-                &mut prevent_default,
-                prevent_default_cb_nop,
-                handler_nop,
-            );
+            doc.simulate_hidden_input_backspace(handler_nop);
             assert_eq!(doc.notation(), to_flat(["H| World"]));
-            doc.simulate_hidden_input_backspace(
-                &mut prevent_default,
-                prevent_default_cb_nop,
-                handler_nop,
-            );
+            doc.simulate_hidden_input_backspace(handler_nop);
             assert_eq!(doc.notation(), to_flat(["| World"]));
             for _ in 0..512 {
-                doc.simulate_hidden_input_backspace(
-                    &mut prevent_default,
-                    prevent_default_cb_nop,
-                    handler_nop,
-                );
+                doc.simulate_hidden_input_backspace(handler_nop);
             }
             assert_eq!(doc.notation(), to_flat(["| World"]));
         }
