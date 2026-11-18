@@ -208,6 +208,7 @@ pub fn RichTextArea() -> Html {
             match document_selection.kind() {
                 RichSelectionKind::MonoNode(RichCharacterRangeKind::MonoCharacter) => {
                     let focused_node = document_selection.start_node;
+                    let focused_parent = helpers.node_info(focused_node, |info| info.parent);
                     let focused_node_type =
                         helpers.try_node_data(focused_node, |node_kind| node_kind.clone());
                     match focused_node_type {
@@ -254,6 +255,8 @@ pub fn RichTextArea() -> Html {
                                     let runner = state.runner(|e| {
                                         wasm_syscalls::effect_handler(e, input_elem.clone())
                                     });
+
+                                    e.prevent_default();
                                     document_operations::move_caret_horizontal(
                                         &mut state,
                                         runner,
@@ -261,7 +264,6 @@ pub fn RichTextArea() -> Html {
                                         CaretDirection::Left,
                                     )
                                     .drain();
-                                    e.prevent_default();
                                 }
                             }
                             "ArrowRight" => {

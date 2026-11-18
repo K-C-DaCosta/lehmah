@@ -2,9 +2,8 @@
 resolver = "1"
 members = [
     "crates/oxypress_core",
+    "crates/oxypress_web_client",
     "services/oxypress_web_server",
-    "scripts/gen_local_certs"
-, "scripts/run-tests"]
-exclude = [
-"crates/oxypress_web_client"
+    "scripts/gen_local_certs", 
+    "scripts/run-tests"
 ]

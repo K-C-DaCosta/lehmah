@@ -8,7 +8,7 @@ const SKIP_PROGRAM_NAME: usize = 1;
 const EXIT_CODE_FAILURE: i32 = 1;
 const EXIT_CODE_BAD_USAGE: i32 = 2;
 const LOCALHOST: &str = "127.0.0.1";
-const TEST_STD_OUT_ENABLED: bool = false;
+const TEST_STDOUT_ENABLED: bool = false;
 
 fn main() -> Result<(), Box<dyn error::Error>> {
     let test_name_filters = std::env::args()
@@ -31,7 +31,7 @@ fn main() -> Result<(), Box<dyn error::Error>> {
     let test_runner_exit_stats = Command::new("cargo")
         .args(["test", "--target=x86_64-unknown-linux-gnu"])
         .args(&test_name_filters)
-        .args(if TEST_STD_OUT_ENABLED {
+        .args(if TEST_STDOUT_ENABLED {
             &["--", "--no-capture"][..]
         } else {
             &[][..]

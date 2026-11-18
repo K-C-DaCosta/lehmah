@@ -78,11 +78,12 @@ pub struct RichSelection {
     pub debug_info: Option<RichSelectionDebugInfo>,
 }
 
+#[derive(PartialEq, Copy, Clone, Debug)]
 pub enum RichCharacterRangeKind {
     MonoCharacter,
     MultiCharacter,
 }
-
+#[derive(PartialEq, Copy, Clone, Debug)]
 pub enum RichSelectionKind {
     MonoNode(RichCharacterRangeKind),
     MultiNode,
@@ -328,10 +329,9 @@ impl TextAreaState {
          *  ....Text('HELLO WORLD'|Bold)
          *  -------------
          *  The side table `forest_content`
-         *  holds highlighting/caret information for text 
+         *  holds highlighting/caret information for text
          *  nodes
          * */
-
 
         let sample_text = "Hello World";
         let helpers = self.document_helpers();
@@ -1499,7 +1499,7 @@ pub mod document_operations {
         // at all, this could be improved, im leaving this alone
         // because this works for right now
         let (leaf_list, focused_index) = collect_leaf_nodes(state, focused_node);
-        runner.push(Effect::ConsoleLog(format!("leaf list = {:?}", leaf_list)));
+        //runner.push(Effect::ConsoleLog(format!("leaf list = {:?}", leaf_list)));
         let adjacent_node_idx = focused_index as isize + direction.to_sign_horizontal();
 
         let is_invalid_adjacent = |adjacent_node_idx: isize| {
@@ -1515,7 +1515,7 @@ pub mod document_operations {
             .try_get_text_state(new_focused_node, |text_state| text_state.clone())
             .expect("Failed to get text state");
 
-        let caret = match direction {
+        let mut caret = match direction {
             CaretDirection::Right => RichOffset::zero(),
             CaretDirection::Left => RichOffset::from_utf8_offset(
                 &new_focused_text_state.content,
@@ -1523,6 +1523,42 @@ pub mod document_operations {
             ),
             _ => panic!("Only Left and Right are expected in this routine"),
         };
+        let line_container_ptr = helpers.node_info(focused_node, |info| info.parent);
+        let line_container_len = helpers.node_info(line_container_ptr, |info| info.children.len());
+        let focused_node_idx_in_line_container = helpers
+            .node_info(line_container_ptr, |info| {
+                info.children
+                    .iter()
+                    .enumerate()
+                    .find(|(_idx, ptr)| focused_node == **ptr)
+                    .map(|(idx, _)| idx)
+            })
+            .expect("Failed to find focused node in line container");
+
+        let is_okay_to_use_default_caret_because_focused_node_is_moving_into_line_junction = || {
+            (focused_node_idx_in_line_container == 0 && matches!(direction, CaretDirection::Left))
+                || (focused_node_idx_in_line_container == line_container_len - 1
+                    && matches!(direction, CaretDirection::Right))
+        };
+
+        if !is_okay_to_use_default_caret_because_focused_node_is_moving_into_line_junction() {
+            // TODO:
+            // THIS CODE MIGHT BREAK IF SPECIAL CHARACTERS ARE USED
+            // an external create can fix this. We should be moving by graphmemes not by
+            // chars
+            let next_position = match direction {
+                CaretDirection::Left => new_focused_text_state.content[0..caret.utf8]
+                    .char_indices()
+                    .next_back(),
+                CaretDirection::Right => new_focused_text_state.content[caret.utf8..]
+                    .char_indices()
+                    .nth(1),
+                _ => panic!("Unexpected direction, only LEFT OR RIGHT is allowed"),
+            };
+            if let Some((utf8_offset, dst_char)) = next_position {
+                caret = RichOffset::from_utf8_offset(&new_focused_text_state.content, utf8_offset);
+            }
+        }
 
         state.flush_overlays();
         helpers
@@ -1714,8 +1750,7 @@ pub mod document_operations {
         }
 
         let current_line = helpers.node_info(focused_node, |info| info.parent);
-        let current_line_children =
-            helpers.node_info(current_line, |info| info.children.to_vec());
+        let current_line_children = helpers.node_info(current_line, |info| info.children.to_vec());
         let focused_node_opens_the_line = current_line_children.first() == Some(&focused_node);
         if !focused_node_opens_the_line || current_line_children.is_empty() {
             return runner;

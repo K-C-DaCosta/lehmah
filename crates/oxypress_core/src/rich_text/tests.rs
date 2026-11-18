@@ -1,3 +1,5 @@
+use crate::{log::ConsoleColors, loggy};
+
 use super::*;
 
 struct Harness {
@@ -220,11 +222,9 @@ impl Harness {
 
     pub fn backspace(&mut self) {
         let mut prevent_default = false;
-        let prevent_default_clone = &mut prevent_default as *mut bool; 
-        let prevent_default_cb = || {
-            unsafe {
-                *prevent_default_clone = true; 
-            }
+        let prevent_default_clone = &mut prevent_default as *mut bool;
+        let prevent_default_cb = || unsafe {
+            *prevent_default_clone = true;
         };
         self.simulate_hidden_input_backspace(
             &mut prevent_default,
@@ -295,6 +295,89 @@ impl Harness {
     fn notation(&self) -> String {
         self.ta_state.to_notation()
     }
+
+    fn arrow_key(&mut self, dir: CaretDirection) {
+        self.simulate_hidden_input_arrow_key(dir, |harness, prevent_default| {
+            let helpers = harness.ta_state.document_helpers();
+            let local_document_selection = harness.ta_state.document_selection().unwrap();
+            assert_eq!(
+                local_document_selection.kind(),
+                RichSelectionKind::MonoNode(RichCharacterRangeKind::MonoCharacter),
+                "Expecting document selection to be just a caret, so one node, and no ranges"
+            );
+            let focused_node = local_document_selection.start_node;
+            let focuesed_text_state = helpers
+                .try_get_text_state(focused_node, |ts| ts.clone())
+                .expect("Failed to get text state");
+            let caret_offset = local_document_selection.start_offset;
+            if (caret_offset.utf8 == 0 && matches!(dir, CaretDirection::Left))
+                || (caret_offset.utf8 == focuesed_text_state.content.len()
+                    && matches!(dir, CaretDirection::Right))
+            {
+                prevent_default();
+                let runner = harness
+                    .ta_state
+                    .runner(|e| generic_effect_handler(e.clone()));
+                document_operations::move_caret_horizontal(
+                    &mut harness.ta_state,
+                    runner,
+                    focused_node,
+                    dir,
+                )
+                .drain();
+            }
+        });
+    }
+
+    fn simulate_hidden_input_arrow_key<F>(&mut self, dir: CaretDirection, mut before_arrow_key: F)
+    where
+        F: FnMut(&mut Self, &dyn Fn()),
+    {
+        let focused_node = *self.ta_state.focused_node();
+        let helpers = self.ta_state.document_helpers();
+
+        let prevent_default = std::cell::Cell::new(false);
+        let prevent_default_cb = || prevent_default.set(true);
+        before_arrow_key(self, &prevent_default_cb);
+        if prevent_default.get() {
+            return;
+        }
+
+        let text_state = helpers
+            .try_get_text_state(focused_node, |state| state.clone())
+            .expect("Failed to get text state");
+        let mut caret_position = helpers
+            .try_get_extra_text_state(focused_node, |ets| ets.selection.as_caret())
+            .expect("Failed to get extra text state")
+            .expect("Failed to get caret");
+
+        // FIXME: this can potentially break if special characters
+        // are inserted, we need to move by grapheme
+        let new_caret_utf8 = match dir {
+            CaretDirection::Right => text_state.content[caret_position.utf8..]
+                .chars()
+                .next()
+                .map(|c| caret_position.utf8 + c.len_utf8()),
+            CaretDirection::Left => text_state.content[0..caret_position.utf8]
+                .chars()
+                .next_back()
+                .map(|c| caret_position.utf8 - c.len_utf8()),
+            _ => panic!("Unsupported directions"),
+        };
+        if let Some(new_caret_utf8) = new_caret_utf8 {
+            caret_position = RichOffset::from_utf8_offset(&text_state.content, new_caret_utf8);
+        }
+        helpers
+            .try_get_extra_text_state_mut(focused_node, |ets| {
+                ets.selection = TextSelectionKind::Caret(caret_position)
+            })
+            .expect("Failed to mutate extra text state");
+
+        *self.ta_state.document_selection_mut() = Some(RichSelection::mononode(
+            focused_node,
+            RichRange::from_caret(caret_position),
+        ));
+    }
 }
 
 pub fn to_flat<T: AsRef<[&'static str]>>(lines: T) -> String {
@@ -319,6 +402,30 @@ mod split_line {
         doc.click_on_caret();
         doc.backspace();
         assert_eq!(doc.notation(), to_flat(["Hello Worl|"]));
+    }
+    mod arrow_keys {
+        use super::*;
+        #[test]
+        fn cross_text_junction() {
+            let mut doc = Harness::split_line();
+            doc.click_on_caret();
+            doc.arrow_key(CaretDirection::Left);
+            #[rustfmt::skip]
+            assert_eq!(
+                doc.notation(),
+                to_flat([
+                    "Hello Worl<b>|d</b>"
+                ])
+            );
+            doc.arrow_key(CaretDirection::Left);
+            #[rustfmt::skip]
+            assert_eq!(
+                doc.notation(),
+                to_flat([
+                "Hello Wor|l<b>d</b>"
+                ])
+            );
+        }
     }
 }
 
@@ -384,6 +491,24 @@ mod bold_line {
             "<b>Hello| World</b>"
         ]));
     }
+    mod arrow_keys {
+        use super::*;
+        #[test]
+        fn cross_line_junction() {
+            let mut doc = Harness::bold_line();
+            doc.click_on_caret();
+            doc.enter();
+            doc.arrow_key(CaretDirection::Left);
+            #[rustfmt::skip]
+            assert_eq!(
+                doc.notation(),
+                to_flat([
+                "<b>Hello|</b>", 
+                "<b> World</b>"
+                ])
+            );
+        }
+    }
 
     #[test]
     fn enter_line_at_caret() {
@@ -429,6 +554,76 @@ mod plain_line {
         assert_eq!(doc.notation(), to_flat([
             "Hello| World"
         ]));
+    }
+    mod arrow_keys {
+        use super::*;
+        mod hidden_input {
+            use super::*;
+            #[test]
+            fn simulated_input_move_left() {
+                let mut doc = Harness::plain_line();
+                let nop_handler = &|_: &mut Harness, _: &dyn Fn()| ();
+                doc.click_on_caret();
+                doc.simulate_hidden_input_arrow_key(CaretDirection::Left, &nop_handler);
+                assert_eq!(doc.notation(), to_flat(["Hell|o World"]));
+                doc.simulate_hidden_input_arrow_key(CaretDirection::Left, &nop_handler);
+                assert_eq!(doc.notation(), to_flat(["Hel|lo World"]));
+                doc.simulate_hidden_input_arrow_key(CaretDirection::Left, &nop_handler);
+                assert_eq!(doc.notation(), to_flat(["He|llo World"]));
+                doc.simulate_hidden_input_arrow_key(CaretDirection::Left, &nop_handler);
+                assert_eq!(doc.notation(), to_flat(["H|ello World"]));
+                doc.simulate_hidden_input_arrow_key(CaretDirection::Left, &nop_handler);
+                assert_eq!(doc.notation(), to_flat(["|Hello World"]));
+                for _ in 0..512 {
+                    doc.simulate_hidden_input_arrow_key(CaretDirection::Left, &nop_handler);
+                }
+                assert_eq!(doc.notation(), to_flat(["|Hello World"]));
+            }
+
+            #[test]
+            fn move_left() {
+                let mut doc = Harness::plain_line();
+                doc.click_on_caret();
+                doc.arrow_key(CaretDirection::Left);
+                assert_eq!(doc.notation(), to_flat(["Hell|o World"]));
+                doc.arrow_key(CaretDirection::Left);
+                assert_eq!(doc.notation(), to_flat(["Hel|lo World"]));
+                doc.arrow_key(CaretDirection::Left);
+                assert_eq!(doc.notation(), to_flat(["He|llo World"]));
+                doc.arrow_key(CaretDirection::Left);
+                assert_eq!(doc.notation(), to_flat(["H|ello World"]));
+                doc.arrow_key(CaretDirection::Left);
+                assert_eq!(doc.notation(), to_flat(["|Hello World"]));
+                for _ in 0..512 {
+                    doc.arrow_key(CaretDirection::Left);
+                }
+                assert_eq!(doc.notation(), to_flat(["|Hello World"]));
+            }
+            #[test]
+            fn simulated_input_move_right() {
+                let mut doc = Harness::plain_line();
+                let nop_handler = &|_: &mut Harness, _: &dyn Fn()| ();
+                doc.click_on_caret();
+                #[rustfmt::skip]
+                assert_eq!(doc.notation(), to_flat([
+                    "Hello| World"
+                ]));
+                doc.simulate_hidden_input_arrow_key(CaretDirection::Right, &nop_handler);
+                assert_eq!(doc.notation(), to_flat(["Hello |World"]));
+                doc.simulate_hidden_input_arrow_key(CaretDirection::Right, &nop_handler);
+                assert_eq!(doc.notation(), to_flat(["Hello W|orld"]));
+                doc.simulate_hidden_input_arrow_key(CaretDirection::Right, &nop_handler);
+                assert_eq!(doc.notation(), to_flat(["Hello Wo|rld"]));
+                doc.simulate_hidden_input_arrow_key(CaretDirection::Right, &nop_handler);
+                assert_eq!(doc.notation(), to_flat(["Hello Wor|ld"]));
+                doc.simulate_hidden_input_arrow_key(CaretDirection::Right, &nop_handler);
+                assert_eq!(doc.notation(), to_flat(["Hello Worl|d"]));
+                for _ in 0..512 {
+                    doc.simulate_hidden_input_arrow_key(CaretDirection::Right, &nop_handler);
+                }
+                assert_eq!(doc.notation(), to_flat(["Hello World|"]));
+            }
+        }
     }
 
     mod backspace {
@@ -502,7 +697,7 @@ mod plain_line {
             let mut prevent_default = false;
             let mut doc = Harness::plain_line();
             let handler_nop = |_: &mut Harness, _| ();
-            let mut prevent_default_cb_nop = || ();
+            let prevent_default_cb_nop = || ();
             doc.click_on_caret();
 
             doc.simulate_hidden_input_backspace(
@@ -575,4 +770,16 @@ mod plain_line {
             ]));
         }
     }
+}
+
+fn generic_effect_handler(e: Effect) -> Option<Command> {
+    match e {
+        Effect::ConsoleLog(text) => loggy!(ConsoleColors::WHITE, "ConsoleLog:\'{}\'", text),
+        unsupported_effect => loggy!(
+            ConsoleColors::YELLOW,
+            "Unsupported Effect: \'{:?}\'",
+            unsupported_effect
+        ),
+    };
+    None
 }
