@@ -109,10 +109,6 @@ impl RichSelection {
         }
     }
 
-    pub fn null() -> Self {
-        Self::mononode(Ptr::null(), RichRange::default())
-    }
-
     #[track_caller]
     pub fn mononode(node: Ptr<RichTag>, range: RichRange) -> Self {
         let location = panic::Location::caller();
@@ -518,13 +514,13 @@ impl TextAreaState {
         }
     }
 
-    pub fn tree_dump(&self) -> String {
+    pub fn to_xml(&self) -> String {
         let mut notation_buffer = String::new();
         let helper = self.document_helpers();
-        Self::tree_dump_helper(&helper, self.document, &mut notation_buffer);
+        Self::to_xml_helper(&helper, self.document, &mut notation_buffer);
         notation_buffer
     }
-    fn tree_dump_helper(helper: &RichDocumentHelpers, root: Ptr<RichTag>, output: &mut String) {
+    fn to_xml_helper(helper: &RichDocumentHelpers, root: Ptr<RichTag>, output: &mut String) {
         if root.is_null() {
             return;
         }
@@ -535,7 +531,7 @@ impl TextAreaState {
                 output.push_str("<doc>");
                 for child_idx in 0..child_len {
                     let child_ptr = helper.node_info(root, |info| info.children[child_idx]);
-                    Self::tree_dump_helper(helper, child_ptr, output);
+                    Self::to_xml_helper(helper, child_ptr, output);
                 }
                 output.push_str("</doc>");
             }
@@ -543,7 +539,7 @@ impl TextAreaState {
                 output.push_str("<line>");
                 for child_idx in 0..child_len {
                     let child_ptr = helper.node_info(root, |info| info.children[child_idx]);
-                    Self::tree_dump_helper(helper, child_ptr, output);
+                    Self::to_xml_helper(helper, child_ptr, output);
                 }
                 output.push_str("</line>");
             }
@@ -556,27 +552,41 @@ impl TextAreaState {
                     TextSelectionKind::Caret(pos) => {
                         let lower = &text_state.content[0..pos.utf8];
                         let upper = &text_state.content[pos.utf8..];
-                        output.push_str(lower);
+                        output.push_str(&Self::visible_whitespace(lower));
                         output.push('|');
-                        output.push_str(upper);
+                        output.push_str(&Self::visible_whitespace(upper));
                     }
                     TextSelectionKind::Unselected => {
-                        output.push_str(text_state.content.as_str());
+                        output.push_str(&Self::visible_whitespace(text_state.content.as_str()));
                     }
                     TextSelectionKind::Range(range) => {
                         let head = &text_state.content[..range.start.utf8];
                         let selected = &text_state.content[range.start.utf8..range.end.utf8];
                         let tail = &text_state.content[range.end.utf8..];
-                        output.push_str(head);
+                        output.push_str(&Self::visible_whitespace(head));
                         output.push('[');
-                        output.push_str(selected);
+                        output.push_str(&Self::visible_whitespace(selected));
                         output.push(']');
-                        output.push_str(tail);
+                        output.push_str(&Self::visible_whitespace(tail));
                     }
                 }
                 output.push_str("</text>");
             }
         }
+    }
+    fn visible_whitespace(text: &str) -> String {
+        let mut acc = String::new();
+        for c in text.chars() {
+            if !c.is_whitespace() {
+                acc.push(c);
+            }
+            match c {
+                '\t' => acc.push_str("····"),
+                '\u{2003}' => acc.push_str("··"),
+                _ => acc.push('·'),
+            }
+        }
+        acc
     }
 }
 

@@ -436,7 +436,7 @@ mod split_line {
 
         #[test]
         fn multi_node_highlight() {
-            let mut doc = Harness::split_line();
+            let doc = Harness::split_line();
             doc.select_between("Hello Worl", "d");
             assert_eq!(doc.notation(), to_flat(["[Hello Worl]<b>[d]</b>"]));
         }
@@ -811,6 +811,8 @@ mod plain_line {
 
     mod enter {
         use super::*;
+
+        #[test]
         fn enter_line_at_caret() {
             let mut doc = Harness::plain_line();
             doc.click_on_caret();
