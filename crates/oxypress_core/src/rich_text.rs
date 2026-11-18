@@ -109,6 +109,10 @@ impl RichSelection {
         }
     }
 
+    pub fn null() -> Self {
+        Self::mononode(Ptr::null(), RichRange::default())
+    }
+
     #[track_caller]
     pub fn mononode(node: Ptr<RichTag>, range: RichRange) -> Self {
         let location = panic::Location::caller();

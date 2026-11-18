@@ -317,6 +317,53 @@ impl Harness {
         });
     }
 
+    fn select_between(&self, start: &str, end: &str) {
+        let helpers = self.ta_state.document_helpers();
+        enum StateKind {
+            Init,
+            Collecting,
+            Done,
+        };
+        let mut state = StateKind::Init;
+        let mut selection = RichSelection::mononode(Ptr::null(), RichRange::default());
+
+        for (ptr, text_state) in helpers
+            .forest()
+            .iter(self.ta_state.document)
+            .filter_map(|(ptr, data)| Some(ptr).zip(data.as_text()))
+        {
+            match state {
+                StateKind::Init => {
+                    if let Some(start_offset) = text_state.content.find(start) {
+                        selection.start_node = ptr;
+                        selection.start_offset =
+                            RichOffset::from_utf8_offset(&text_state.content, start_offset);
+                        state = StateKind::Collecting;
+                    }
+                }
+                StateKind::Collecting => {
+                    if let Some(start_offset) = text_state.content.find(end) {
+                        selection.end_node = ptr;
+                        selection.end_offset = RichOffset::from_utf8_offset(
+                            &text_state.content,
+                            start_offset + end.chars().map(|c| c.len_utf8()).sum::<usize>(),
+                        );
+                        state = StateKind::Done;
+                        break;
+                    }
+                }
+                StateKind::Done => {
+                    break;
+                }
+            }
+        }
+        if !matches!(state, StateKind::Done) {
+            panic!("Selection not found in the document");
+        }
+
+        document_operations::apply_highlights(&self.ta_state, selection);
+    }
+
     fn simulate_hidden_input_arrow_key<F>(&mut self, dir: CaretDirection, mut before_arrow_key: F)
     where
         F: FnMut(&mut Self, &dyn Fn()),
@@ -382,6 +429,32 @@ mod split_line {
     fn sample() {
         let doc = Harness::split_line();
         assert_eq!(doc.notation(), to_flat(["Hello Worl<b>d|</b>"]));
+    }
+
+    mod highlights {
+        use super::*;
+
+        #[test]
+        fn multi_node_highlight() {
+            let mut doc = Harness::split_line();
+            doc.select_between("Hello Worl", "d");
+            assert_eq!(doc.notation(), to_flat(["[Hello Worl]<b>[d]</b>"]));
+        }
+
+        #[test]
+        fn multi_line_highlight() {
+            let mut doc = Harness::split_line();
+            doc.click_on_caret();
+            doc.enter();
+            doc.enter();
+            doc.select_between("Hello Worl", "d");
+            #[rustfmt::skip]
+            assert_eq!(doc.notation(), to_flat([
+                "[Hello Worl]<b>[d]</b>", 
+                "<b>∅</b>", 
+                "<b>|∅</b>"
+            ]));
+        }
     }
 
     #[test]
@@ -478,6 +551,40 @@ mod bold_line {
         assert_eq!(doc.notation(), to_flat([
             "<b>Hello| World</b>"
         ]));
+    }
+    mod highlights {
+        use super::*;
+        #[test]
+        fn multi_line_highlight() {
+            let mut doc = Harness::bold_line();
+            doc.click_on_caret();
+            doc.enter();
+            doc.enter();
+            doc.enter();
+
+            #[rustfmt::skip]
+            assert_eq!(
+                doc.notation(),
+                to_flat([
+                "<b>Hello</b>",
+                "<b>∅</b>",
+                "<b>∅</b>",
+                "<b>| World</b>"
+                ])
+            );
+
+            doc.select_between("Hello", "World");
+            #[rustfmt::skip]
+            assert_eq!(
+                doc.notation(),
+                to_flat([
+                "<b>[Hello]</b>",
+                "<b>∅</b>",
+                "<b>∅</b>",
+                "<b>[ World]</b>"
+                ])
+            );
+        }
     }
     mod arrow_keys {
         use super::*;
